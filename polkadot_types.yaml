@@ -1,0 +1,47 @@
+global:
+  types:
+    Balance: u64 # ?
+    Index: u32 # ?
+    AccountId32: "[u8; 32]"
+    T::Moment: u64
+
+    # Hardcoded types for old metadatas that don't know about them.
+    hardcoded::ExtrinsicAddress: AccountId32
+    hardcoded::ExtrinsicSignature: "[u8; 65]"
+
+    # Old metadatas don't contain signed ext info and instead points to this type.
+    # It should be a struct or tuple of signed exts in order.
+    hardcoded::ExtrinsicSignedExtensions: [
+
+    ]
+
+    # signed exts
+    ChargeAssetTxPayment:
+      tip: Compact<Balance>
+      assetId: Option<AssetId>
+    ChargeTransactionPayment:
+      tip: Compact<Balance>
+    CheckBlockGasLimit: []
+    CheckEra: []
+    CheckGenesis: []
+    CheckMortality:
+      era: u64 # ?
+    CheckNonZeroSender: []
+    CheckNonce:
+      nonce: Compact<Index>
+    CheckSpecVersion: []
+    CheckTxVersion: []
+    CheckVersion: []
+    CheckWeight: []
+    LockStakingStatus: []
+    ValidateEquivocationReport: []
+    TransactionCallFilter: []
+    LimitParathreadCommits: []
+    OnlyStakingAndClaims: []
+    PrevalidateAttests: []
+    RestrictFunctionality: []
+    ValidateDoubleVoteReports: []
+    DisallowSigned: []
+
+# Same format as the above, but an array of:
+forSpec: []

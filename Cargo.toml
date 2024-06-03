@@ -1,0 +1,18 @@
+[package]
+name = "substrate-block-decoder"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.86"
+clap = { version = "4.5.4", features = ["derive"] }
+frame-metadata = { version = "16.0.0", features = ["legacy"] }
+parity-scale-codec = "3.6.12"
+scale-decode = "0.13.0"
+scale-info = "2.11.3"
+scale-info-legacy = "0.1.0"
+scale-type-resolver = "0.2.0"
+scale-value = "0.16.0"
+serde_yaml = "0.9.34"
+subxt = "0.37.0"
+tokio = { version = "1.38.0", features = ["full"] }
