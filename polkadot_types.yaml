@@ -1,19 +1,226 @@
 global:
   types:
-    Balance: u64 # ?
-    Index: u32 # ?
-    AccountId32: "[u8; 32]"
+    # System
+    Perbill: u32
+    ChangesTrieConfiguration:
+      digestInterval: u32
+      digestLevels: u32
+    KeyValue: '(StorageKey, StorageData)'
+    Key: Bytes
+    StorageKey: unknown # TODO how to handle this?
+    StorageData: Bytes
+
+    # Scheduler
+    T::BlockNumber: u32
+    schedule::Period<BN>: '(BN, u32)'
+    schedule::Priority: u8
+    <T as Trait>::Call: builtin::Call
+
+    # Timestamp
     T::Moment: u64
+
+    # Indices
+    T::AccountIndex: unknown # TODO how to handle this?
+    T::AccountId: AccountId32
+
+    # Balances
+    <T::Lookup as StaticLookup>::Source: AccountId
+    T::Balance: u64
+
+    # Authorship
+    T::Header:
+      parentHash: Hash
+      number: Compact<T::BlockNumber>
+      stateRoot: Hash
+      extrinsicsRoot: Hash
+      digest: Digest
+    Digest:
+      logs: Vec<DigestItem>
+    Hash: H256
+    DigestItem:
+      _enum:
+        Other: Bytes
+        AuthoritiesChange: Vec<AuthorityId>
+        ChangesTrieRoot: Hash
+        SealV0: SealV0
+        Consensus: Consensus
+        Seal: Seal
+        PreRuntime: PreRuntime
+        ChangesTrieSignal: ChangesTrieSignal
+        RuntimeEnvironmentUpdated: []
+    AuthorityId: AccountId32
+    SealV0: (u64, Signature)
+    Consensus: (ConsensusEngineId, Bytes)
+    Seal: Consensus
+    PreRuntime: Consensus
+    ChangesTrieSignal:
+      _enum:
+        NewConfiguration: Option<ChangesTrieConfiguration>
+    ChangesTrieConfiguration:
+      digestInterval: u32
+      digestLevels: u32
+    Signature: H512
+    ConsensusEngineId: '[u8; 4]'
+
+    # Staking
+    BalanceOf<T>: u128
+    RewardDestination:
+      _enum:
+        Staked: []
+        Stash: []
+        Controller: []
+        Account: AccountId
+        None: []
+    ValidatorPrefs:
+      commission: Compact<Perbill>
+      blocked: bool
+    EraIndex: u32
+    ValidatorIndex: u32
+    CompactAssignments: CompactAssignmentsWith16
+    CompactAssignmentsWith16:
+      votes1: Vec<(NominatorIndexCompact, ValidatorIndexCompact)>
+      votes2: Vec<(NominatorIndexCompact, CompactScoreCompact, ValidatorIndexCompact)>
+      votes3: Vec<(NominatorIndexCompact, [CompactScoreCompact; 2], ValidatorIndexCompact)>
+      votes4: Vec<(NominatorIndexCompact, [CompactScoreCompact; 3], ValidatorIndexCompact)>
+      votes5: Vec<(NominatorIndexCompact, [CompactScoreCompact; 4], ValidatorIndexCompact)>
+      votes6: Vec<(NominatorIndexCompact, [CompactScoreCompact; 5], ValidatorIndexCompact)>
+      votes7: Vec<(NominatorIndexCompact, [CompactScoreCompact; 6], ValidatorIndexCompact)>
+      votes8: Vec<(NominatorIndexCompact, [CompactScoreCompact; 7], ValidatorIndexCompact)>
+      votes9: Vec<(NominatorIndexCompact, [CompactScoreCompact; 8], ValidatorIndexCompact)>
+      votes10: Vec<(NominatorIndexCompact, [CompactScoreCompact; 9], ValidatorIndexCompact)>
+      votes11: Vec<(NominatorIndexCompact, [CompactScoreCompact; 10], ValidatorIndexCompact)>
+      votes12: Vec<(NominatorIndexCompact, [CompactScoreCompact; 11], ValidatorIndexCompact)>
+      votes13: Vec<(NominatorIndexCompact, [CompactScoreCompact; 12], ValidatorIndexCompact)>
+      votes14: Vec<(NominatorIndexCompact, [CompactScoreCompact; 13], ValidatorIndexCompact)>
+      votes15: Vec<(NominatorIndexCompact, [CompactScoreCompact; 14], ValidatorIndexCompact)>
+      votes16: Vec<(NominatorIndexCompact, [CompactScoreCompact; 15], ValidatorIndexCompact)>
+    PhragmenScore: '[u128; 3]'
+    ElectionSize:
+      validators: Compact<ValidatorIndex>
+      nominators: Compact<NominatorIndex>
+    NominatorIndex: u32
+    NominatorIndexCompact: Compact<NominatorIndex>
+    CompactScore: (ValidatorIndex, OffchainAccuracy)
+    CompactScoreCompact: Compact<CompactScore>
+    ValidatorIndex: u16
+    ValidatorIndexCompact: Compact<ValidatorIndex>
+    OffchainAccuracy: PerU16
+    PerU16: u16
+
+    # Session
+    T::Keys: SessionKeys4
+    SessionKeys4: (AccountId, AccountId, AccountId, AccountId)
+
+    # Grandpa
+    T::Hash: unknown
+    T::KeyOwnerProof: unknown
+
+    # ImOnline
+    Heartbeat<BN>:
+      blockNumber: BN
+      networkState: OpaqueNetworkState
+      sessionIndex: SessionIndex
+      authorityIndex: AuthIndex
+      validatorsLen: u32
+    <T::AuthorityId as RuntimeAppPublic>::Signature: H512
+
+    # Democracy
+    PropIndex: unknown
+    ReferendumIndex: unknown
+    AccountVote<BalanceOf<T>>: unknown
+    ReferendumIndex: unknown
+    Conviction: unknown
+
+    # Council
+    MemberCount: unknown
+    <T as Trait<I>>::Proposal: unknown
+    ProposalIndex: unknown
+    Weight: unknown
+
+    # ElectionsPhragmen
+    DefunctVoter<<T::Lookup as StaticLookup>::Source>: unknown
+    Renouncing: unknown
+
+    # Parachains
+    AttestedCandidate: unknown
+    DoubleVoteReport<<T::KeyOwnerProofSystem as KeyOwnerProofSystem<(KeyTypeId, ValidatorId)>>::Proof>: unknown
+
+    # Attestations
+    MoreAttestations: unknown
+
+    # Slots
+    LeasePeriodOf<T>: unknown
+    SubId: unknown
+    AuctionIndex: unknown
+    ParaId: unknown
+    HeadData: unknown
+    ValidationCode: unknown
+
+    # Registrar
+    ParaInfo: unknown
+    CollatorId: unknown
+
+    # Claims
+    EcdsaSignature: '[u8; 65]'
+    EthereumAddress: unknown
+    StatementKind: unknown
+
+    # Vesting
+    VestingInfo<BalanceOf<T>, T::BlockNumber>: unknown
+
+    # Utility
+    Timepoint<T::BlockNumber>: unknown
+
+
+    # Manually defined types below:
+
+    Balance: u64
+    Index: u32
+    AccountId32: "[u8; 32]"
+    AccountId: AccountId32
+    SessionIndex: u32
+    Bytes: Vec<u8>
+    EcdsaSignature: '[u8; 65]'
+    Ed25519Signature: '[u8; 64]'
+    Sr25519Signature: '[u8; 64]'
+
+    H32: '[u8; 4]'
+    H64: '[u8; 8]'
+    H128: '[u8; 16]'
+    H160: '[u8; 20]'
+    H256: '[u8; 32]'
+    H512: '[u8; 64]'
+    H1024: '[u8; 128]'
+    H2048: '[u8; 256]'
+    Hash: H256
+    Era:
+      # This has a dumb representation because it's encoded in a custom way.
+      # This representation matches the TypeInfo generated for it in newer metadatas.
+      _enum: {"Immortal":[],"Mortal1":"u8","Mortal2":"u8","Mortal3":"u8","Mortal4":"u8","Mortal5":"u8","Mortal6":"u8","Mortal7":"u8","Mortal8":"u8","Mortal9":"u8","Mortal10":"u8","Mortal11":"u8","Mortal12":"u8","Mortal13":"u8","Mortal14":"u8","Mortal15":"u8","Mortal16":"u8","Mortal17":"u8","Mortal18":"u8","Mortal19":"u8","Mortal20":"u8","Mortal21":"u8","Mortal22":"u8","Mortal23":"u8","Mortal24":"u8","Mortal25":"u8","Mortal26":"u8","Mortal27":"u8","Mortal28":"u8","Mortal29":"u8","Mortal30":"u8","Mortal31":"u8","Mortal32":"u8","Mortal33":"u8","Mortal34":"u8","Mortal35":"u8","Mortal36":"u8","Mortal37":"u8","Mortal38":"u8","Mortal39":"u8","Mortal40":"u8","Mortal41":"u8","Mortal42":"u8","Mortal43":"u8","Mortal44":"u8","Mortal45":"u8","Mortal46":"u8","Mortal47":"u8","Mortal48":"u8","Mortal49":"u8","Mortal50":"u8","Mortal51":"u8","Mortal52":"u8","Mortal53":"u8","Mortal54":"u8","Mortal55":"u8","Mortal56":"u8","Mortal57":"u8","Mortal58":"u8","Mortal59":"u8","Mortal60":"u8","Mortal61":"u8","Mortal62":"u8","Mortal63":"u8","Mortal64":"u8","Mortal65":"u8","Mortal66":"u8","Mortal67":"u8","Mortal68":"u8","Mortal69":"u8","Mortal70":"u8","Mortal71":"u8","Mortal72":"u8","Mortal73":"u8","Mortal74":"u8","Mortal75":"u8","Mortal76":"u8","Mortal77":"u8","Mortal78":"u8","Mortal79":"u8","Mortal80":"u8","Mortal81":"u8","Mortal82":"u8","Mortal83":"u8","Mortal84":"u8","Mortal85":"u8","Mortal86":"u8","Mortal87":"u8","Mortal88":"u8","Mortal89":"u8","Mortal90":"u8","Mortal91":"u8","Mortal92":"u8","Mortal93":"u8","Mortal94":"u8","Mortal95":"u8","Mortal96":"u8","Mortal97":"u8","Mortal98":"u8","Mortal99":"u8","Mortal100":"u8","Mortal101":"u8","Mortal102":"u8","Mortal103":"u8","Mortal104":"u8","Mortal105":"u8","Mortal106":"u8","Mortal107":"u8","Mortal108":"u8","Mortal109":"u8","Mortal110":"u8","Mortal111":"u8","Mortal112":"u8","Mortal113":"u8","Mortal114":"u8","Mortal115":"u8","Mortal116":"u8","Mortal117":"u8","Mortal118":"u8","Mortal119":"u8","Mortal120":"u8","Mortal121":"u8","Mortal122":"u8","Mortal123":"u8","Mortal124":"u8","Mortal125":"u8","Mortal126":"u8","Mortal127":"u8","Mortal128":"u8","Mortal129":"u8","Mortal130":"u8","Mortal131":"u8","Mortal132":"u8","Mortal133":"u8","Mortal134":"u8","Mortal135":"u8","Mortal136":"u8","Mortal137":"u8","Mortal138":"u8","Mortal139":"u8","Mortal140":"u8","Mortal141":"u8","Mortal142":"u8","Mortal143":"u8","Mortal144":"u8","Mortal145":"u8","Mortal146":"u8","Mortal147":"u8","Mortal148":"u8","Mortal149":"u8","Mortal150":"u8","Mortal151":"u8","Mortal152":"u8","Mortal153":"u8","Mortal154":"u8","Mortal155":"u8","Mortal156":"u8","Mortal157":"u8","Mortal158":"u8","Mortal159":"u8","Mortal160":"u8","Mortal161":"u8","Mortal162":"u8","Mortal163":"u8","Mortal164":"u8","Mortal165":"u8","Mortal166":"u8","Mortal167":"u8","Mortal168":"u8","Mortal169":"u8","Mortal170":"u8","Mortal171":"u8","Mortal172":"u8","Mortal173":"u8","Mortal174":"u8","Mortal175":"u8","Mortal176":"u8","Mortal177":"u8","Mortal178":"u8","Mortal179":"u8","Mortal180":"u8","Mortal181":"u8","Mortal182":"u8","Mortal183":"u8","Mortal184":"u8","Mortal185":"u8","Mortal186":"u8","Mortal187":"u8","Mortal188":"u8","Mortal189":"u8","Mortal190":"u8","Mortal191":"u8","Mortal192":"u8","Mortal193":"u8","Mortal194":"u8","Mortal195":"u8","Mortal196":"u8","Mortal197":"u8","Mortal198":"u8","Mortal199":"u8","Mortal200":"u8","Mortal201":"u8","Mortal202":"u8","Mortal203":"u8","Mortal204":"u8","Mortal205":"u8","Mortal206":"u8","Mortal207":"u8","Mortal208":"u8","Mortal209":"u8","Mortal210":"u8","Mortal211":"u8","Mortal212":"u8","Mortal213":"u8","Mortal214":"u8","Mortal215":"u8","Mortal216":"u8","Mortal217":"u8","Mortal218":"u8","Mortal219":"u8","Mortal220":"u8","Mortal221":"u8","Mortal222":"u8","Mortal223":"u8","Mortal224":"u8","Mortal225":"u8","Mortal226":"u8","Mortal227":"u8","Mortal228":"u8","Mortal229":"u8","Mortal230":"u8","Mortal231":"u8","Mortal232":"u8","Mortal233":"u8","Mortal234":"u8","Mortal235":"u8","Mortal236":"u8","Mortal237":"u8","Mortal238":"u8","Mortal239":"u8","Mortal240":"u8","Mortal241":"u8","Mortal242":"u8","Mortal243":"u8","Mortal244":"u8","Mortal245":"u8","Mortal246":"u8","Mortal247":"u8","Mortal248":"u8","Mortal249":"u8","Mortal250":"u8","Mortal251":"u8","Mortal252":"u8","Mortal253":"u8","Mortal254":"u8","Mortal255":"u8"}
+
+    MultiAddress<AccountId, AccountIndex>:
+      _enum:
+        Id: AccountId,
+        Index: AccountIndex
+
+    MultiSignature:
+      _enum:
+        Ed25519: Ed25519Signature
+        Sr25519: Sr25519Signature
+        Ecdsa: EcdsaSignature
+
+    # imOnline
+    OpaqueNetworkState:
+      peerId: OpaquePeerId,
+      externalAddresses: Vec<OpaqueMultiaddr>
+    OpaquePeerId: Bytes
+    OpaqueMultiaddr: Bytes
+    AuthIndex: u32
+    AuthoritySignature: Signature,
 
     # Hardcoded types for old metadatas that don't know about them.
     hardcoded::ExtrinsicAddress: AccountId32
-    hardcoded::ExtrinsicSignature: "[u8; 65]"
-
-    # Old metadatas don't contain signed ext info and instead points to this type.
-    # It should be a struct or tuple of signed exts in order.
-    hardcoded::ExtrinsicSignedExtensions: [
-
-    ]
+    hardcoded::ExtrinsicSignature: MultiSignature
 
     # signed exts
     ChargeAssetTxPayment:
@@ -22,10 +229,10 @@ global:
     ChargeTransactionPayment:
       tip: Compact<Balance>
     CheckBlockGasLimit: []
-    CheckEra: []
+    CheckEra: CheckMortality
     CheckGenesis: []
     CheckMortality:
-      era: u64 # ?
+      era: Era
     CheckNonZeroSender: []
     CheckNonce:
       nonce: Compact<Index>

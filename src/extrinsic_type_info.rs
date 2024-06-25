@@ -1,28 +1,38 @@
 use frame_metadata::decode_different::DecodeDifferent;
-use scale_info_legacy::LookupName;
+use scale_info_legacy::{LookupName, TypeRegistry};
 use anyhow::{anyhow, bail};
 
 /// This is implemented for all metadatas exposed from `frame_metadata` and is respondible for extracting the
 /// type IDs that we need in order to decode extrinsics.
 pub trait ExtrinsicTypeInfo {
     type TypeId;
-    // Get the type IDs for each of the arguments in the call data.
-    fn get_call_argument_ids(&self, pallet_index: u8, call_index: u8) -> anyhow::Result<Vec<Arg<Self::TypeId>>>;
+    // Get the information about a given extrinsic.
+    fn get_extrinsic_info(&self, pallet_index: u8, call_index: u8) -> anyhow::Result<ExtrinsicInfo<Self::TypeId>>;
     // Get the information needed to decode the extrinsic signature bytes.
     fn get_signature_info(&self) -> anyhow::Result<ExtrinsicSignatureInfo<Self::TypeId>>;
 }
 
+#[derive(Debug)]
 pub struct Arg<TypeId> {
     pub name: String,
     pub id: TypeId,
 }
+
+#[derive(Debug)]
+pub struct ExtrinsicInfo<TypeId> {
+    pub pallet_name: String,
+    pub call_name: String,
+    pub args: Vec<Arg<TypeId>>
+}
+
+#[derive(Debug)]
 pub struct ExtrinsicSignatureInfo<TypeId> {
     pub address_id: TypeId,
     pub signature_id: TypeId,
     pub signed_extension_ids: Vec<Arg<TypeId>>
 }
 
-macro_rules! impl_call_arg_ids_body_for_v8_to_v11 {
+macro_rules! impl_extrinsic_info_body_for_v8_to_v11 {
     ($self:ident, $pallet_index:ident, $call_index:ident) => {{
         let modules = as_decoded(&$self.modules);
 
@@ -44,13 +54,21 @@ macro_rules! impl_call_arg_ids_body_for_v8_to_v11 {
             .get($call_index as usize)
             .ok_or_else(|| anyhow!("Could not find call with index {} in pallet {m_name} (index {})", $call_index, $pallet_index))?;
 
+        let c_name = as_decoded(&call.name);
+
         let args = as_decoded(&call.arguments);
 
-        args.iter().map(|a| {
+        let args = args.iter().map(|a| {
             let ty = as_decoded(&a.ty);
-            let id = LookupName::parse(ty).map_err(|e| anyhow!("Could not parse type name {ty}: {e}"))?;
+            let id = LookupName::parse(ty).map_err(|e| anyhow!("Could not parse type name {ty}: {e}"))?.in_pallet(m_name);
             Ok(Arg { id, name: as_decoded(&a.name).to_owned() })
-        }).collect()
+        }).collect::<anyhow::Result<_>>()?;
+
+        Ok(ExtrinsicInfo {
+            pallet_name: m_name.clone(),
+            call_name: c_name.clone(),
+            args
+        })
     }}
 }
 
@@ -58,8 +76,8 @@ macro_rules! impl_for_v8_to_v10 {
     ($path:path) => {
         impl ExtrinsicTypeInfo for $path {
             type TypeId = LookupName;
-            fn get_call_argument_ids(&self, pallet_index: u8, call_index: u8) -> anyhow::Result<Vec<Arg<Self::TypeId>>> {
-                impl_call_arg_ids_body_for_v8_to_v11!(self, pallet_index, call_index)
+            fn get_extrinsic_info(&self, pallet_index: u8, call_index: u8) -> anyhow::Result<ExtrinsicInfo<Self::TypeId>> {
+                impl_extrinsic_info_body_for_v8_to_v11!(self, pallet_index, call_index)
             }
             fn get_signature_info(&self) -> anyhow::Result<ExtrinsicSignatureInfo<Self::TypeId>> {
                 Ok(ExtrinsicSignatureInfo {
@@ -83,8 +101,8 @@ impl_for_v8_to_v10!(frame_metadata::v10::RuntimeMetadataV10);
 
 impl ExtrinsicTypeInfo for frame_metadata::v11::RuntimeMetadataV11 {
     type TypeId = LookupName;
-    fn get_call_argument_ids(&self, pallet_index: u8, call_index: u8) -> anyhow::Result<Vec<Arg<Self::TypeId>>> {
-        impl_call_arg_ids_body_for_v8_to_v11!(self, pallet_index, call_index)
+    fn get_extrinsic_info(&self, pallet_index: u8, call_index: u8) -> anyhow::Result<ExtrinsicInfo<Self::TypeId>> {
+        impl_extrinsic_info_body_for_v8_to_v11!(self, pallet_index, call_index)
 
     }
     fn get_signature_info(&self) -> anyhow::Result<ExtrinsicSignatureInfo<Self::TypeId>> {
@@ -110,7 +128,7 @@ macro_rules! impl_for_v12_to_v13 {
     ($path:path) => {
         impl ExtrinsicTypeInfo for $path {
             type TypeId = LookupName;
-            fn get_call_argument_ids(&self, pallet_index: u8, call_index: u8) -> anyhow::Result<Vec<Arg<Self::TypeId>>> {
+            fn get_extrinsic_info(&self, pallet_index: u8, call_index: u8) -> anyhow::Result<ExtrinsicInfo<Self::TypeId>> {
                 let modules = as_decoded(&self.modules);
 
                 let m = modules
@@ -130,13 +148,21 @@ macro_rules! impl_for_v12_to_v13 {
                     .get(call_index as usize)
                     .ok_or_else(|| anyhow!("Could not find call with index {call_index} in pallet {m_name}"))?;
 
+                let c_name = as_decoded(&call.name);
+
                 let args = as_decoded(&call.arguments);
 
-                args.iter().map(|a| {
+                let args = args.iter().map(|a| {
                     let ty = as_decoded(&a.ty);
-                    let id = LookupName::parse(ty).map_err(|e| anyhow!("Could not parse type name {ty}: {e}"))?;
+                    let id = LookupName::parse(ty).map_err(|e| anyhow!("Could not parse type name {ty}: {e}"))?.in_pallet(m_name);
                     Ok(Arg { id, name: as_decoded(&a.name).to_owned() })
-                }).collect()
+                }).collect::<anyhow::Result<_>>()?;
+
+                Ok(ExtrinsicInfo {
+                    pallet_name: m_name.clone(),
+                    call_name: c_name.clone(),
+                    args
+                })
             }
             fn get_signature_info(&self) -> anyhow::Result<ExtrinsicSignatureInfo<Self::TypeId>> {
                 // In V12 metadata we are exposing signed extension names, so we use those directly instead of
@@ -188,13 +214,23 @@ macro_rules! impl_call_arg_ids_body_for_v14_to_v15 {
             .find(|v| v.index == $call_index)
             .ok_or_else(|| anyhow!("Could not find call with index {} in pallet {pallet_name}", $call_index))?;
 
-        Ok(call_variant.fields.iter().map(|f| Arg { id: f.ty.id, name: f.name.as_ref().unwrap().to_owned() }).collect())
+        let args = call_variant
+            .fields
+            .iter()
+            .map(|f| Arg { id: f.ty.id, name: f.name.as_ref().unwrap().to_owned() })
+            .collect();
+
+        Ok(ExtrinsicInfo {
+            pallet_name: pallet_name.clone(),
+            call_name: call_variant.name.clone(),
+            args,
+        })
     }}
 }
 
 impl ExtrinsicTypeInfo for frame_metadata::v14::RuntimeMetadataV14 {
     type TypeId = u32;
-    fn get_call_argument_ids(&self, pallet_index: u8, call_index: u8) -> anyhow::Result<Vec<Arg<Self::TypeId>>> {
+    fn get_extrinsic_info(&self, pallet_index: u8, call_index: u8) -> anyhow::Result<ExtrinsicInfo<Self::TypeId>> {
         impl_call_arg_ids_body_for_v14_to_v15!(self, pallet_index, call_index)
     }
     fn get_signature_info(&self) -> anyhow::Result<ExtrinsicSignatureInfo<Self::TypeId>> {
@@ -214,7 +250,7 @@ impl ExtrinsicTypeInfo for frame_metadata::v14::RuntimeMetadataV14 {
 
 impl ExtrinsicTypeInfo for frame_metadata::v15::RuntimeMetadataV15 {
     type TypeId = u32;
-    fn get_call_argument_ids(&self, pallet_index: u8, call_index: u8) -> anyhow::Result<Vec<Arg<Self::TypeId>>> {
+    fn get_extrinsic_info(&self, pallet_index: u8, call_index: u8) -> anyhow::Result<ExtrinsicInfo<Self::TypeId>> {
         impl_call_arg_ids_body_for_v14_to_v15!(self, pallet_index, call_index)
     }
     fn get_signature_info(&self) -> anyhow::Result<ExtrinsicSignatureInfo<Self::TypeId>> {
@@ -227,14 +263,6 @@ impl ExtrinsicTypeInfo for frame_metadata::v15::RuntimeMetadataV15 {
             signature_id: self.extrinsic.signature_ty.id,
             signed_extension_ids
         })
-    }
-}
-
-/// A utility function to unwrap the `DecodeDifferent` enum in earlier metadata versions.
-fn as_decoded<A, B>(item: &DecodeDifferent<A, B>) -> &B {
-    match item {
-        DecodeDifferent::Encode(_a) => panic!("Expecting decoded data"),
-        DecodeDifferent::Decoded(b) => b,
     }
 }
 
@@ -282,5 +310,137 @@ impl ExtrinsicPartTypeIds {
             address: *address,
             signature: *signature,
         })
+    }
+}
+
+/// Add runtime call information to our type info given the metadata. This allows us to decode things like
+/// utility.batch, which contains inner calls, without having to hardcode the Call info in our types.
+pub fn extend_with_call_info(types: &mut scale_info_legacy::TypeRegistrySet, metadata: &frame_metadata::RuntimeMetadata) -> anyhow::Result<()> {
+    use scale_info_legacy::type_shape::{TypeShape,Field,Variant,VariantDesc};
+    use scale_info_legacy::InsertName;
+
+    macro_rules! impl_for_v8_to_v13 {
+        ($metadata:ident $($builtin_index:ident)?) => {{
+            let mut call_types = TypeRegistry::empty();
+
+            let modules = as_decoded(&$metadata.modules);
+            let modules_iter = modules
+                .iter()
+                .filter(|m| m.calls.is_some())
+                .enumerate();
+
+            let mut module_variants: Vec<Variant> = vec![];
+            for (m_idx, module) in modules_iter {
+                // For v12 and v13 metadata, there is a buildin index.
+                // If we pass an ident as second arg to this macro, we'll trigger
+                // using that builtin index instead.
+                $(
+                    let $builtin_index = true;
+                    let m_idx = if $builtin_index {
+                        module.index as usize
+                    } else {
+                        m_idx
+                    };
+                )?
+
+                let module_name = as_decoded(&module.name);
+                let calls = as_decoded(&module.calls.as_ref().unwrap());
+
+                // Iterate over each call in the module and turn into variants:
+                let mut call_variants: Vec<Variant> = vec![];
+                for (c_idx, call) in calls.iter().enumerate() {
+                    let call_name = as_decoded(&call.name);
+                    let args = as_decoded(&call.arguments)
+                        .iter()
+                        .map(|arg| {
+                            Ok(Field {
+                                name: as_decoded(&arg.name).to_owned(),
+                                value: LookupName::parse(&as_decoded(&arg.ty))?.in_pallet(module_name),
+                            })
+                        })
+                        .collect::<anyhow::Result<_>>()?;
+
+                    call_variants.push(Variant {
+                        index: c_idx as u8,
+                        name: call_name.clone(),
+                        fields: VariantDesc::StructOf(args)
+                    });
+                }
+
+                // Store these call variants in the types:
+                let call_enum_name_str = format!("builtin::module::{module_name}");
+                let call_enum_insert_name = InsertName::parse(&call_enum_name_str).unwrap();
+                call_types.insert(call_enum_insert_name, TypeShape::EnumOf(call_variants));
+
+                // Reference it in the modules enum we're building:
+                let call_enum_lookup_name = LookupName::parse(&call_enum_name_str).unwrap();
+                module_variants.push(Variant {
+                    index: m_idx as u8,
+                    name: module_name.clone(),
+                    fields: VariantDesc::TupleOf(vec![call_enum_lookup_name])
+                })
+            }
+
+            // Store the module variants in the types:
+            let modules_enum_name_str = "builtin::Call";
+            let modules_enum_insert_name = InsertName::parse(&modules_enum_name_str).unwrap();
+            call_types.insert(modules_enum_insert_name, TypeShape::EnumOf(module_variants));
+
+            // Extend our type registry set with the new types (giving them the lowest priority).
+            types.prepend(call_types);
+        }}
+    }
+
+    match metadata {
+        frame_metadata::RuntimeMetadata::V8(m) => impl_for_v8_to_v13!(m),
+        frame_metadata::RuntimeMetadata::V9(m) => impl_for_v8_to_v13!(m),
+        frame_metadata::RuntimeMetadata::V10(m) => impl_for_v8_to_v13!(m),
+        frame_metadata::RuntimeMetadata::V11(m) => impl_for_v8_to_v13!(m),
+        frame_metadata::RuntimeMetadata::V12(m) => impl_for_v8_to_v13!(m use_builtin_index),
+        frame_metadata::RuntimeMetadata::V13(m) => impl_for_v8_to_v13!(m use_builtin_index),
+        _ => {/* do nothing if metadata too old or new */}
+    };
+
+    Ok(())
+}
+
+/// A helper to print all of the types we need to support across different pallets.
+pub fn print_call_types(types: &scale_info_legacy::TypeRegistrySet) {
+    let mut seen = std::collections::HashSet::<String>::new();
+
+    let module_visitor = scale_type_resolver::visitor::new(&mut seen, |_,_| ())
+        .visit_variant(|seen,_,variants| {
+            for mut variant in variants {
+                // Module name.
+                println!("# {}", variant.name);
+                let calls_enum = variant.fields.next().unwrap().id;
+
+                let call_visitor = scale_type_resolver::visitor::new::<_,LookupName,_,_>(&mut *seen, |_,_| ())
+                    .visit_variant(|seen,_,variants| {
+                        for variant in variants {
+                            // Call name
+                            // println!("## {}", variant.name);
+
+                            // Call args
+                            for field in variant.fields {
+                                if seen.insert(field.id.to_string()) {
+                                    println!("{}", field.id.to_string());
+                                }
+                            }
+                        }
+                    });
+
+                let _ = types.resolve_type(calls_enum, call_visitor);
+            }
+        });
+
+    let _ = types.resolve_type_str("builtin::Call", module_visitor);
+}
+
+/// A utility function to unwrap the `DecodeDifferent` enum in earlier metadata versions.
+fn as_decoded<A, B>(item: &DecodeDifferent<A, B>) -> &B {
+    match item {
+        DecodeDifferent::Encode(_a) => panic!("Expecting decoded data"),
+        DecodeDifferent::Decoded(b) => b,
     }
 }
