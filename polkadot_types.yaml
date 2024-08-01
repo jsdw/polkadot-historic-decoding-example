@@ -7,7 +7,7 @@ global:
       digestLevels: u32
     KeyValue: '(StorageKey, StorageData)'
     Key: Bytes
-    StorageKey: unknown # TODO how to handle this?
+    StorageKey: Bytes # Unsure about this: storage keys can vary in shape based on hashers etc.
     StorageData: Bytes
 
     # Scheduler
@@ -20,7 +20,7 @@ global:
     T::Moment: u64
 
     # Indices
-    T::AccountIndex: unknown # TODO how to handle this?
+    T::AccountIndex: u32 # Unsure about this: GenericAccountIndex has compact-like-but-custom encoding?
     T::AccountId: AccountId32
 
     # Balances
@@ -73,27 +73,43 @@ global:
         None: []
     ValidatorPrefs:
       commission: Compact<Perbill>
-      blocked: bool
     EraIndex: u32
     ValidatorIndex: u32
     CompactAssignments: CompactAssignmentsWith16
     CompactAssignmentsWith16:
-      votes1: Vec<(NominatorIndexCompact, ValidatorIndexCompact)>
-      votes2: Vec<(NominatorIndexCompact, CompactScoreCompact, ValidatorIndexCompact)>
-      votes3: Vec<(NominatorIndexCompact, [CompactScoreCompact; 2], ValidatorIndexCompact)>
-      votes4: Vec<(NominatorIndexCompact, [CompactScoreCompact; 3], ValidatorIndexCompact)>
-      votes5: Vec<(NominatorIndexCompact, [CompactScoreCompact; 4], ValidatorIndexCompact)>
-      votes6: Vec<(NominatorIndexCompact, [CompactScoreCompact; 5], ValidatorIndexCompact)>
-      votes7: Vec<(NominatorIndexCompact, [CompactScoreCompact; 6], ValidatorIndexCompact)>
-      votes8: Vec<(NominatorIndexCompact, [CompactScoreCompact; 7], ValidatorIndexCompact)>
-      votes9: Vec<(NominatorIndexCompact, [CompactScoreCompact; 8], ValidatorIndexCompact)>
-      votes10: Vec<(NominatorIndexCompact, [CompactScoreCompact; 9], ValidatorIndexCompact)>
-      votes11: Vec<(NominatorIndexCompact, [CompactScoreCompact; 10], ValidatorIndexCompact)>
-      votes12: Vec<(NominatorIndexCompact, [CompactScoreCompact; 11], ValidatorIndexCompact)>
-      votes13: Vec<(NominatorIndexCompact, [CompactScoreCompact; 12], ValidatorIndexCompact)>
-      votes14: Vec<(NominatorIndexCompact, [CompactScoreCompact; 13], ValidatorIndexCompact)>
-      votes15: Vec<(NominatorIndexCompact, [CompactScoreCompact; 14], ValidatorIndexCompact)>
-      votes16: Vec<(NominatorIndexCompact, [CompactScoreCompact; 15], ValidatorIndexCompact)>
+      votes1: 'Vec<(NominatorIndex, [CompactScore; 0], ValidatorIndex)>'
+      votes2: 'Vec<(NominatorIndex, [CompactScore; 1], ValidatorIndex)>'
+      votes3: 'Vec<(NominatorIndex, [CompactScore; 2], ValidatorIndex)>'
+      votes4: 'Vec<(NominatorIndex, [CompactScore; 3], ValidatorIndex)>'
+      votes5: 'Vec<(NominatorIndex, [CompactScore; 4], ValidatorIndex)>'
+      votes6: 'Vec<(NominatorIndex, [CompactScore; 5], ValidatorIndex)>'
+      votes7: 'Vec<(NominatorIndex, [CompactScore; 6], ValidatorIndex)>'
+      votes8: 'Vec<(NominatorIndex, [CompactScore; 7], ValidatorIndex)>'
+      votes9: 'Vec<(NominatorIndex, [CompactScore; 8], ValidatorIndex)>'
+      votes10: 'Vec<(NominatorIndex, [CompactScore; 9], ValidatorIndex)>'
+      votes11: 'Vec<(NominatorIndex, [CompactScore; 10], ValidatorIndex)>'
+      votes12: 'Vec<(NominatorIndex, [CompactScore; 11], ValidatorIndex)>'
+      votes13: 'Vec<(NominatorIndex, [CompactScore; 12], ValidatorIndex)>'
+      votes14: 'Vec<(NominatorIndex, [CompactScore; 13], ValidatorIndex)>'
+      votes15: 'Vec<(NominatorIndex, [CompactScore; 14], ValidatorIndex)>'
+      votes16: 'Vec<(NominatorIndex, [CompactScore; 15], ValidatorIndex)>'
+    # CompactAssignmentsWith16:
+    #   votes1: Vec<(NominatorIndexCompact, ValidatorIndexCompact)>
+    #   votes2: Vec<(NominatorIndexCompact, CompactScoreCompact, ValidatorIndexCompact)>
+    #   votes3: Vec<(NominatorIndexCompact, [CompactScoreCompact; 2], ValidatorIndexCompact)>
+    #   votes4: Vec<(NominatorIndexCompact, [CompactScoreCompact; 3], ValidatorIndexCompact)>
+    #   votes5: Vec<(NominatorIndexCompact, [CompactScoreCompact; 4], ValidatorIndexCompact)>
+    #   votes6: Vec<(NominatorIndexCompact, [CompactScoreCompact; 5], ValidatorIndexCompact)>
+    #   votes7: Vec<(NominatorIndexCompact, [CompactScoreCompact; 6], ValidatorIndexCompact)>
+    #   votes8: Vec<(NominatorIndexCompact, [CompactScoreCompact; 7], ValidatorIndexCompact)>
+    #   votes9: Vec<(NominatorIndexCompact, [CompactScoreCompact; 8], ValidatorIndexCompact)>
+    #   votes10: Vec<(NominatorIndexCompact, [CompactScoreCompact; 9], ValidatorIndexCompact)>
+    #   votes11: Vec<(NominatorIndexCompact, [CompactScoreCompact; 10], ValidatorIndexCompact)>
+    #   votes12: Vec<(NominatorIndexCompact, [CompactScoreCompact; 11], ValidatorIndexCompact)>
+    #   votes13: Vec<(NominatorIndexCompact, [CompactScoreCompact; 12], ValidatorIndexCompact)>
+    #   votes14: Vec<(NominatorIndexCompact, [CompactScoreCompact; 13], ValidatorIndexCompact)>
+    #   votes15: Vec<(NominatorIndexCompact, [CompactScoreCompact; 14], ValidatorIndexCompact)>
+    #   votes16: Vec<(NominatorIndexCompact, [CompactScoreCompact; 15], ValidatorIndexCompact)>
     PhragmenScore: '[u128; 3]'
     ElectionSize:
       validators: Compact<ValidatorIndex>
@@ -108,12 +124,17 @@ global:
     PerU16: u16
 
     # Session
-    T::Keys: SessionKeys4
-    SessionKeys4: (AccountId, AccountId, AccountId, AccountId)
+    T::Keys: SessionKeys5
+    SessionKeys5: (AccountId, AccountId, AccountId, AccountId, AccountId)
 
     # Grandpa
-    T::Hash: unknown
-    T::KeyOwnerProof: unknown
+    T::Hash: H256
+    T::KeyOwnerProof: MembershipProof
+    MembershipProof:
+      session: SessionIndex
+      trieNodes: Vec<Bytes>
+      validatorCount: ValidatorCount
+    ValidatorCount: u32
 
     # ImOnline
     Heartbeat<BN>:
@@ -125,52 +146,110 @@ global:
     <T::AuthorityId as RuntimeAppPublic>::Signature: H512
 
     # Democracy
-    PropIndex: unknown
-    ReferendumIndex: unknown
-    AccountVote<BalanceOf<T>>: unknown
-    ReferendumIndex: unknown
-    Conviction: unknown
+    PropIndex: u32
+    ReferendumIndex: u32
+    AccountVote<Balance>:
+      _enum:
+        Standard:
+          aye: Balance
+          nay: Balance
+        Split:
+          vote: Vote
+          balance: Balance
+    Vote: u8 # most significant bit for "aye", conviction 0001-0101
+    Conviction:
+      _enum:
+        # 0.1x votes, unlocked.
+        - None
+        # 1x votes, locked for an enactment period following a successful vote.
+        - Locked1x
+        # 2x votes, locked for 2x enactment periods following a successful vote.
+        - Locked2x
+        # 3x votes, locked for 4x...
+        - Locked3x
+        # 4x votes, locked for 8x...
+        - Locked4x
+        # 5x votes, locked for 16x...
+        - Locked5x,
+        # 6x votes,locked for 32x...
+        - Locked6x
 
     # Council
-    MemberCount: unknown
-    <T as Trait<I>>::Proposal: unknown
-    ProposalIndex: unknown
-    Weight: unknown
+    MemberCount: u32
+    <T as Trait<I>>::Proposal: builtin::Call
+    ProposalIndex: u32
+    Weight: u64 # v1 = u32? but we seem to need u64 on block 29231. v2 = u64, v3 = { refTime: Compact<u64>, proofSize: Compact<u64> }
 
     # ElectionsPhragmen
-    DefunctVoter<<T::Lookup as StaticLookup>::Source>: unknown
-    Renouncing: unknown
+    DefunctVoter<Source>:
+      who: Source,
+      voteCount: Compact<u32>
+      candidateCount: Compact<u32>
+    <T::Lookup as StaticLookup>::Source: AccountId
+    Renouncing:
+      _enum:
+        Member: []
+        RunnerUp: []
+        Candidate: Compact<u32>
 
     # Parachains
-    AttestedCandidate: unknown
-    DoubleVoteReport<<T::KeyOwnerProofSystem as KeyOwnerProofSystem<(KeyTypeId, ValidatorId)>>::Proof>: unknown
+    AttestedCandidate:
+      candidate: AbridgedCandidateReceipt
+      validityVotes: Vec<ValidityAttestation>
+      validatorIndices: BitVec
+    DoubleVoteReport<Proof>:
+      identity: ValidatorId
+      first: (Statement, ValidatorSignature)
+      second: (Statement, ValidatorSignature)
+      proof: Proof
+      signingContext: SigningContext
+    <T::KeyOwnerProofSystem as KeyOwnerProofSystem<(KeyTypeId, ValidatorId)>>::Proof: MembershipProof
+    ValidatorId: AccountId
+    ValidatorSignature: Signature
+    Statement:
+      _enum:
+        Never: [] # index starts at 1
+        Candidate: Hash
+        Valid: Hash
+        Invalid: Hash
+    SigningContext:
+      sessionIndex: SessionIndex
+      parentHash: Hash
 
     # Attestations
-    MoreAttestations: unknown
+    MoreAttestations: {}
 
     # Slots
-    LeasePeriodOf<T>: unknown
-    SubId: unknown
-    AuctionIndex: unknown
-    ParaId: unknown
-    HeadData: unknown
-    ValidationCode: unknown
+    LeasePeriodOf<T>: T::BlockNumber
+    SubId: u32
+    AuctionIndex: u32
+    ParaId: u32
+    HeadData: Bytes
+    ValidationCode: Bytes
 
     # Registrar
-    ParaInfo: unknown
-    CollatorId: unknown
+    ParaInfo:
+      manager: AccountId
+      deposit: Balance
+      locked: bool
+    CollatorId: H256
 
     # Claims
     EcdsaSignature: '[u8; 65]'
-    EthereumAddress: unknown
-    StatementKind: unknown
+    EthereumAddress: '[u8; 20]'
+    StatementKind:
+      _enum: ['Regular', 'Saft']
 
     # Vesting
-    VestingInfo<BalanceOf<T>, T::BlockNumber>: unknown
+    VestingInfo<Balance, BlockNumber>:
+      locked: Balance
+      perBlock: Balance
+      startingBlock: BlockNumber
 
     # Utility
-    Timepoint<T::BlockNumber>: unknown
-
+    Timepoint<BlockNumber>:
+      height: BlockNumber
+      index: u32
 
     # Manually defined types below:
 
@@ -183,6 +262,7 @@ global:
     EcdsaSignature: '[u8; 65]'
     Ed25519Signature: '[u8; 64]'
     Sr25519Signature: '[u8; 64]'
+    BitVec: bitvec::vec::BitVec<u8, bitvec::order::Msb0>
 
     H32: '[u8; 4]'
     H64: '[u8; 8]'

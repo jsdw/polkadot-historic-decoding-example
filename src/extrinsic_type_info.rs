@@ -405,6 +405,7 @@ pub fn extend_with_call_info(types: &mut scale_info_legacy::TypeRegistrySet, met
 }
 
 /// A helper to print all of the types we need to support across different pallets.
+#[allow(dead_code)]
 pub fn print_call_types(types: &scale_info_legacy::TypeRegistrySet) {
     let mut seen = std::collections::HashSet::<String>::new();
 

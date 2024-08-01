@@ -43,7 +43,7 @@ pub fn decode_extrinsic(bytes: &[u8], metadata: &RuntimeMetadata, historic_types
 fn decode_extrinsic_inner<Info, Resolver>(bytes: &[u8], args_info: &Info, type_resolver: &Resolver) -> anyhow::Result<Extrinsic>
 where
     Info: ExtrinsicTypeInfo,
-    Info::TypeId: Clone + std::fmt::Display + std::fmt::Debug,
+    Info::TypeId: Clone + core::fmt::Display + core::fmt::Debug + Send + Sync + 'static,
     Resolver: TypeResolver<TypeId = Info::TypeId>,
 {
     let cursor = &mut &*bytes;
@@ -51,10 +51,12 @@ where
     let ext_len = Compact::<u64>::decode(cursor)
         .with_context(|| "Cannot decode the extrinsic length")?.0 as usize;
 
+    if cursor.len() != ext_len {
+        bail!("Number of bytes differs from reported extrinsic length");
+    }
+
     let ext_bytes = cursor.get(0..ext_len)
         .with_context(|| "Missing extrinsic bytes")?;
-
-    *cursor = &cursor[ext_len..];
 
     if ext_bytes.len() < 1 {
         bail!("Missing extrinsic bytes");
@@ -72,7 +74,7 @@ where
 fn decode_v4_extrinsic<Info, Resolver>(bytes: &[u8], args_info: &Info, type_resolver: &Resolver) -> anyhow::Result<Extrinsic>
 where
     Info: ExtrinsicTypeInfo,
-    Info::TypeId: Clone + std::fmt::Display + std::fmt::Debug,
+    Info::TypeId: Clone + core::fmt::Display + core::fmt::Debug + Send + Sync + 'static,
     Resolver: TypeResolver<TypeId = Info::TypeId>,
 {
     let is_signed = bytes[0] & 0b1000_0000 != 0;
@@ -109,7 +111,7 @@ where
 fn decode_v4_extrinsic_call_data<Info, Resolver>(cursor: &mut &[u8], args_info: &Info, type_resolver: &Resolver) -> anyhow::Result<ExtrinsicCallData>
 where
     Info: ExtrinsicTypeInfo,
-    Info::TypeId: Clone + std::fmt::Display + std::fmt::Debug,
+    Info::TypeId: Clone + core::fmt::Display + core::fmt::Debug + Send + Sync + 'static,
     Resolver: TypeResolver<TypeId = Info::TypeId>,
 {
     let pallet_index: u8 = Decode::decode(cursor)?;
@@ -118,14 +120,48 @@ where
 
     let mut args = vec![];
     for arg in extrinsic_info.args {
-        let value = scale_value::scale::decode_as_type(cursor, arg.id.clone(), type_resolver)
-            .with_context(|| format!("Failed to decode type '{}' into a Value in extrinsic {}.{}", arg.id, extrinsic_info.pallet_name, extrinsic_info.call_name))?;
-        args.push((arg.name, value.remove_context()))
+        let arg_bytes = *cursor;
+        let value = scale_value::scale::decode_as_type(cursor, arg.id.clone(), type_resolver);
+
+        match value {
+            Ok(value) => {
+                args.push((arg.name, value))
+            },
+            Err(_e) => {
+                scale_value::scale::tracing::decode_as_type(&mut &*arg_bytes, arg.id.clone(), type_resolver)
+                    .with_context(||
+                        format!(
+                            "Failed to decode type '{}' into a Value in extrinsic {}.{} (arg: {})",
+                            arg.id, extrinsic_info.pallet_name, extrinsic_info.call_name, arg.name
+                        )
+                    )?;
+            }
+        }
     }
 
+    // There are leftover non-zero bytes! So format the args etc nicely and error out.
     if !cursor.is_empty() {
-        bail!("Leftover bytes found during extrinsic decoding");
+        use std::fmt::Write;
+        let mut s = String::new();
+
+        writeln!(s, "{} leftover bytes found when trying to decode {}.{} with args:", cursor.len(), extrinsic_info.pallet_name, extrinsic_info.call_name)?;
+        for (arg_name, arg_value) in args {
+            let mut arg_str = String::new();
+            scale_value::stringify::to_writer_custom()
+                .spaced()
+                .add_custom_formatter(|v, w: &mut &mut String| scale_value::stringify::custom_formatters::format_hex(v,w))
+                .format_context(|type_id, w| write!(w, "{type_id:?}"))
+                .write(&arg_value, &mut arg_str)?;
+
+            writeln!(s, "  {arg_name}: {arg_str}")?;
+        }
+
+        writeln!(s, "leftover bytes: 0x{}", hex::encode(cursor))?;
+        bail!("{s}");
     }
+
+    // Remove context from args now, because type ID will vary based on resolver used.
+    let args = args.into_iter().map(|(name, value)| (name, value.remove_context())).collect();
 
     Ok(ExtrinsicCallData {
         pallet_name: extrinsic_info.pallet_name,

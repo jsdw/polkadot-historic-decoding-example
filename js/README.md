@@ -1,0 +1,1 @@
+A JavaScript package which tries to decode blocks via PJS, so that we can compare the output with our Rust version. Same arguments accepted at the rust code (ie `--url` and `--block`).
