@@ -253,23 +253,23 @@ fn print_call_data<W: std::io::Write>(mut w: W, call_data: &ExtrinsicCallData) -
     writeln!(w, "    Call data:")?;
     for arg in &call_data.args {
         write!(w, "      {}: ", arg.0)?;
-        write_value(&mut w, &arg.1, false)?;
+        write_value(&mut w, &arg.1)?;
         writeln!(w)?;
     }
     Ok(())
 }
 
-fn print_signed_exts<W: std::io::Write>(mut w: W, signed_exts: &[(String, scale_value::Value)]) -> anyhow::Result<()> {
+fn print_signed_exts<W: std::io::Write>(mut w: W, signed_exts: &[(String, scale_value::Value<String>)]) -> anyhow::Result<()> {
     writeln!(w, "    Signed exts:")?;
     for ext in signed_exts {
         write!(w, "      {}: ", ext.0)?;
-        write_value(&mut w, &ext.1, false)?;
+        write_value(&mut w, &ext.1)?;
         writeln!(w)?;
     }
     Ok(())
 }
 
-fn write_value<W: std::io::Write, T: std::fmt::Debug>(w: W, value: &Value<T>, with_context: bool) -> core::fmt::Result {
+fn write_value<W: std::io::Write, T: std::fmt::Display>(w: W, value: &Value<T>) -> core::fmt::Result {
     // Our stdout lock is io::Write but we need fmt::Write below.
     // Ideally we'd about this, but io::Write is std-only among
     // other things, so scale-value uses fmt::Write.
@@ -280,15 +280,16 @@ fn write_value<W: std::io::Write, T: std::fmt::Debug>(w: W, value: &Value<T>, wi
         }
     }
 
-    write_value_fmt(ToFmtWrite(w), value, "      ", with_context)
+    write_value_fmt(ToFmtWrite(w), value, "      ")
 }
 
-fn write_value_fmt<W: std::fmt::Write, T: std::fmt::Debug>(w: W, value: &Value<T>, leading_indent: impl Into<String>, with_context: bool) -> core::fmt::Result {
-    let mut value_writer = scale_value::stringify::to_writer_custom()
+fn write_value_fmt<W: std::fmt::Write, T: std::fmt::Display>(w: W, value: &Value<T>, leading_indent: impl Into<String>) -> core::fmt::Result {
+    scale_value::stringify::to_writer_custom()
         .spaced()
         .leading_indent(leading_indent.into())
+        .format_context(|type_id, w: &mut W| write!(w, "{type_id}"))
         .add_custom_formatter(|v, w: &mut W| scale_value::stringify::custom_formatters::format_hex(v,w))
-        .add_custom_formatter(|v, w| {
+        .add_custom_formatter(|v, w: &mut W| {
             // don't space unnamed composites over multiple lines if lots of primitive values.
             if let ValueDef::Composite(Composite::Unnamed(vals)) = &v.value {
                 let are_primitive = vals.iter().all(|val| matches!(val.value, ValueDef::Primitive(_)));
@@ -297,13 +298,8 @@ fn write_value_fmt<W: std::fmt::Write, T: std::fmt::Debug>(w: W, value: &Value<T
                 }
             }
             None
-        });
-
-    if with_context {
-        value_writer = value_writer.format_context(|type_id, w| write!(w, "{type_id:?}"))
-    }
-
-    value_writer.write(&value, w)
+        })
+        .write(&value, w)
 }
 
 struct Output {

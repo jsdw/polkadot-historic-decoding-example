@@ -14,7 +14,7 @@ pub enum Extrinsic {
     V4Signed {
         address: String,
         signature: String,
-        signed_exts: Vec<(String, scale_value::Value)>,
+        signed_exts: Vec<(String, scale_value::Value<String>)>,
         call_data: ExtrinsicCallData
     }
 }
@@ -23,7 +23,7 @@ pub enum Extrinsic {
 pub struct ExtrinsicCallData {
     pub pallet_name: String,
     pub call_name: String,
-    pub args: Vec<(String, scale_value::Value)>
+    pub args: Vec<(String, scale_value::Value<String>)>
 }
 
 pub fn decode_extrinsic(bytes: &[u8], metadata: &RuntimeMetadata, historic_types: &TypeRegistrySet) -> anyhow::Result<Extrinsic> {
@@ -85,19 +85,22 @@ where
 
         let (_address_value, address_bytes) = with_consumed_bytes(cursor, |cursor| {
             scale_value::scale::decode_as_type(cursor, signature_info.address_id, type_resolver)
-                .map(|v| v.remove_context())
+                .map(|v| v.map_context(|ctx| ctx.to_string()))
         });
-        let address = AccountId32(address_bytes.try_into().unwrap()).to_string();
+        let address = address_bytes
+            .try_into()
+            .map(|b| AccountId32(b).to_string())
+            .unwrap_or_else(|_e| format!("0x{}", hex::encode(address_bytes)));
 
         let (_signature_value, signature_bytes) = with_consumed_bytes(cursor, |cursor| {
             scale_value::scale::decode_as_type(cursor, signature_info.signature_id, type_resolver)
-                .map(|v| v.remove_context())
+                .map(|v| v.map_context(|ctx| ctx.to_string()))
         });
         let signature = to_hex(signature_bytes);
 
         let signed_exts = signature_info.signed_extension_ids.into_iter().map(|signed_ext| {
             let decoded_ext = scale_value::scale::decode_as_type(cursor, signed_ext.id, type_resolver)?;
-            Ok((signed_ext.name, decoded_ext.remove_context()))
+            Ok((signed_ext.name, decoded_ext.map_context(|ctx| ctx.to_string())))
         }).collect::<anyhow::Result<Vec<_>>>()?;
 
         let call_data = decode_v4_extrinsic_call_data(cursor, args_info, type_resolver)?;
@@ -125,7 +128,7 @@ where
 
         match value {
             Ok(value) => {
-                args.push((arg.name, value))
+                args.push((arg.name, value.map_context(|ctx| ctx.to_string())))
             },
             Err(_e) => {
                 scale_value::scale::tracing::decode_as_type(&mut &*arg_bytes, arg.id.clone(), type_resolver)
@@ -147,16 +150,13 @@ where
         writeln!(s, "{} leftover bytes found when trying to decode {}.{} with args:", cursor.len(), extrinsic_info.pallet_name, extrinsic_info.call_name)?;
         for (arg_name, arg_value) in args {
             write!(s, "  {arg_name}: ")?;
-            crate::write_value_fmt(&mut s, &arg_value, "", true)?;
+            crate::write_value_fmt(&mut s, &arg_value, "")?;
             writeln!(s)?;
         }
 
         writeln!(s, "leftover bytes: 0x{}", hex::encode(cursor))?;
         bail!("{s}");
     }
-
-    // Remove context from args now, because type ID will vary based on resolver used.
-    let args = args.into_iter().map(|(name, value)| (name, value.remove_context())).collect();
 
     Ok(ExtrinsicCallData {
         pallet_name: extrinsic_info.pallet_name,
