@@ -146,14 +146,9 @@ where
 
         writeln!(s, "{} leftover bytes found when trying to decode {}.{} with args:", cursor.len(), extrinsic_info.pallet_name, extrinsic_info.call_name)?;
         for (arg_name, arg_value) in args {
-            let mut arg_str = String::new();
-            scale_value::stringify::to_writer_custom()
-                .spaced()
-                .add_custom_formatter(|v, w: &mut &mut String| scale_value::stringify::custom_formatters::format_hex(v,w))
-                .format_context(|type_id, w| write!(w, "{type_id:?}"))
-                .write(&arg_value, &mut arg_str)?;
-
-            writeln!(s, "  {arg_name}: {arg_str}")?;
+            write!(s, "  {arg_name}: ")?;
+            crate::write_value_fmt(&mut s, &arg_value, "", true)?;
+            writeln!(s)?;
         }
 
         writeln!(s, "leftover bytes: 0x{}", hex::encode(cursor))?;

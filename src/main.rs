@@ -6,6 +6,7 @@ use decoder::{decode_extrinsic, Extrinsic, ExtrinsicCallData};
 use extrinsic_type_info::extend_with_call_info;
 use frame_metadata::RuntimeMetadata;
 use scale_info_legacy::{ChainTypeRegistry, TypeRegistrySet};
+use scale_value::{Composite, Value, ValueDef};
 use std::path::PathBuf;
 use clap::Parser;
 use subxt::{backend::{
@@ -13,12 +14,11 @@ use subxt::{backend::{
 }, utils::H256};
 use subxt::{Config, SubstrateConfig};
 use subxt::ext::codec::Decode;
-use std::iter::repeat;
 use anyhow::{anyhow, Context};
 use runner::{Runner, RoundRobin};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use std::io::Write;
+use std::io::Write as _;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -33,7 +33,7 @@ struct Opts {
 
     /// How many connections to establish to each url.
     #[arg(short, long)]
-    connections_per_url: Option<usize>,
+    connections: Option<usize>,
 
     /// Only log errors; don't log extrinsics that decode successfully.
     #[arg(short, long)]
@@ -74,28 +74,25 @@ async fn main() -> anyhow::Result<()> {
 
     let errors_only = opts.errors_only;
     let continue_on_error = opts.continue_on_error;
-    let connections_per_url = opts.connections_per_url.unwrap_or(1);
+    let connections = opts.connections.unwrap_or(RPC_NODE_URLS.len());
     let start_block_num = opts.block.unwrap_or_default();
     let historic_types_str = std::fs::read_to_string(&opts.types)
         .with_context(|| "Could not load historic types")?;
 
-    // Use our default or provided URLs. duplicate each one once for each
-    // `connections_per_url`. We'll parallelise over each URL in the resulting vec.
+    // Use our default or built-in URLs if not provided.
     let urls = opts.url
         .as_ref()
-        .map(|url| {
-            url.split(',')
-                .flat_map(|url| repeat(url.to_owned()).take(connections_per_url))
+        .map(|urls| {
+            urls.split(',')
+                .map(|url| url.to_owned())
                 .collect::<Vec<String>>()
         })
         .unwrap_or_else(|| {
             RPC_NODE_URLS
-                .into_iter()
-                .flat_map(|url| repeat(url.to_owned()).take(connections_per_url))
+                .iter()
+                .map(|url| url.to_string())
                 .collect()
         });
-
-    let urls_len = urls.len();
 
     // Our base type mappings that we'll use to decode pre-V14 blocks.
     let historic_types: ChainTypeRegistry = serde_yaml::from_str(&historic_types_str)
@@ -139,7 +136,8 @@ async fn main() -> anyhow::Result<()> {
                     .await
                     .with_context(|| format!("Could not fetch runtime version for block {block_number} with hash {block_hash}"))?;
 
-                if runtime_version.spec_version != state.current_spec_version || state.current_metadata.is_none() || state.current_types_for_spec.is_none() {
+                let this_spec_version = runtime_version.spec_version;
+                if this_spec_version != state.current_spec_version || state.current_metadata.is_none() || state.current_types_for_spec.is_none() {
                     // Fetch new metadata for this spec version.
                     let metadata = state_get_metadata(&state.rpc_client, Some(block_hash))
                         .await
@@ -147,7 +145,7 @@ async fn main() -> anyhow::Result<()> {
 
                     // Prepare new historic type info for this new spec/metadata. Extend the type info
                     // with Call types so that things like utility.batch "Just Work" based on metadata.
-                    let mut historic_types_for_spec = historic_types.for_spec_version(runtime_version.spec_version as u64).to_owned();
+                    let mut historic_types_for_spec = historic_types.for_spec_version(this_spec_version as u64).to_owned();
                     extend_with_call_info(&mut historic_types_for_spec, &metadata)?;
 
                     // Print out all of the call types for any metadata we are given, for debugging etc:
@@ -155,7 +153,7 @@ async fn main() -> anyhow::Result<()> {
 
                     state.current_types_for_spec = Some(historic_types_for_spec);
                     state.current_metadata = Some(metadata);
-                    state.current_spec_version = runtime_version.spec_version;
+                    state.current_spec_version = this_spec_version;
                 }
 
                 let current_metadata = state.current_metadata.as_ref().unwrap();
@@ -169,13 +167,13 @@ async fn main() -> anyhow::Result<()> {
                 let extrinsics = block_body.block.extrinsics.into_iter().map(|ext| {
                     let ext_bytes = ext.0;
                     decode_extrinsic(&ext_bytes, current_metadata, current_types_for_spec)
-                        .with_context(|| format!("Failed to decode extrinsic in block {block_number}"))
+                        .with_context(|| format!("Failed to decode extrinsic (block {block_number}, spec version {this_spec_version})"))
                 }).collect();
 
                 Ok(Output {
                     block_number,
                     block_hash,
-                    spec_version: runtime_version.spec_version,
+                    spec_version: this_spec_version,
                     extrinsics
                 })
             }
@@ -210,7 +208,7 @@ async fn main() -> anyhow::Result<()> {
                         Ok(Extrinsic::V4Unsigned { call_data }) => {
                             if should_print_success {
                                 writeln!(stdout, "  {}.{}:", call_data.pallet_name, call_data.call_name)?;
-                                print_call_data(&mut stdout, &call_data);
+                                print_call_data(&mut stdout, &call_data)?;
                             }
                         },
                         Ok(Extrinsic::V4Signed { address, signature, signed_exts, call_data }) => {
@@ -218,8 +216,8 @@ async fn main() -> anyhow::Result<()> {
                                 writeln!(stdout, "  {}.{}:", call_data.pallet_name, call_data.call_name)?;
                                 writeln!(stdout, "    Address: {address}")?;
                                 writeln!(stdout, "    Signature: {signature}")?;
-                                print_signed_exts(&mut stdout, &signed_exts);
-                                print_call_data(&mut stdout, &call_data);
+                                print_signed_exts(&mut stdout, &signed_exts)?;
+                                print_call_data(&mut stdout, &call_data)?;
                             }
                         },
                         Err(e) => {
@@ -237,7 +235,7 @@ async fn main() -> anyhow::Result<()> {
         }
     );
 
-    if let Err(e) = runner.run(urls_len * connections_per_url, start_block_num as usize).await {
+    if let Err(e) = runner.run(connections, start_block_num as usize).await {
         eprintln!("{e}");
     }
     Ok(())
@@ -251,18 +249,61 @@ async fn state_get_metadata(client: &RpcClient, at: Option<<SubstrateConfig as C
     Ok(metadata.1)
 }
 
-fn print_call_data<W: std::io::Write>(mut w: W, call_data: &ExtrinsicCallData) {
-    writeln!(w, "    Call data:").unwrap();
+fn print_call_data<W: std::io::Write>(mut w: W, call_data: &ExtrinsicCallData) -> anyhow::Result<()> {
+    writeln!(w, "    Call data:")?;
     for arg in &call_data.args {
-        writeln!(w, "      {}: {}", arg.0, arg.1).unwrap();
+        write!(w, "      {}: ", arg.0)?;
+        write_value(&mut w, &arg.1, false)?;
+        writeln!(w)?;
     }
+    Ok(())
 }
 
-fn print_signed_exts<W: std::io::Write>(mut w: W, signed_exts: &[(String, scale_value::Value)]) {
-    writeln!(w, "    Signed exts:").unwrap();
+fn print_signed_exts<W: std::io::Write>(mut w: W, signed_exts: &[(String, scale_value::Value)]) -> anyhow::Result<()> {
+    writeln!(w, "    Signed exts:")?;
     for ext in signed_exts {
-        writeln!(w, "      {}: {}", ext.0, ext.1).unwrap();
+        write!(w, "      {}: ", ext.0)?;
+        write_value(&mut w, &ext.1, false)?;
+        writeln!(w)?;
     }
+    Ok(())
+}
+
+fn write_value<W: std::io::Write, T: std::fmt::Debug>(w: W, value: &Value<T>, with_context: bool) -> core::fmt::Result {
+    // Our stdout lock is io::Write but we need fmt::Write below.
+    // Ideally we'd about this, but io::Write is std-only among
+    // other things, so scale-value uses fmt::Write.
+    struct ToFmtWrite<W>(W);
+    impl <W: std::io::Write> std::fmt::Write for ToFmtWrite<W> {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            self.0.write(s.as_bytes()).map(|_| ()).map_err(|_| std::fmt::Error)
+        }
+    }
+
+    write_value_fmt(ToFmtWrite(w), value, "      ", with_context)
+}
+
+fn write_value_fmt<W: std::fmt::Write, T: std::fmt::Debug>(w: W, value: &Value<T>, leading_indent: impl Into<String>, with_context: bool) -> core::fmt::Result {
+    let mut value_writer = scale_value::stringify::to_writer_custom()
+        .spaced()
+        .leading_indent(leading_indent.into())
+        .add_custom_formatter(|v, w: &mut W| scale_value::stringify::custom_formatters::format_hex(v,w))
+        .add_custom_formatter(|v, w| {
+            // don't space unnamed composites over multiple lines if lots of primitive values.
+            if let ValueDef::Composite(Composite::Unnamed(vals)) = &v.value {
+                let are_primitive = vals.iter().all(|val| matches!(val.value, ValueDef::Primitive(_)));
+                if are_primitive {
+                    return Some(write!(w, "{v}"))
+                }
+            }
+            None
+        });
+
+    if with_context {
+        value_writer = value_writer.format_context(|type_id, w| write!(w, "{type_id:?}"))
+    }
+
+    value_writer.write(&value, w)
 }
 
 struct Output {
