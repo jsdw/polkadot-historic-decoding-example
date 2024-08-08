@@ -21,3 +21,4 @@ tokio = { version = "1.38.0", features = ["full"] }
 
 [patch.crates-io]
 scale-value = { path = "../scale-value" }
+scale-info-legacy = { path = "../scale-info-legacy" }

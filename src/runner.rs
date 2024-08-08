@@ -1,6 +1,6 @@
 use std::future::Future;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
 use std::collections::HashMap;
 
 pub struct Runner<State, InitFn, TaskFn, OutputFn> {
@@ -16,7 +16,7 @@ where
     InitFn: Send + Sync + 'static + Fn(usize, &State) -> WorkloadFut,
     WorkloadFut: Send + Future<Output = anyhow::Result<Workload>>,
     Workload: Send,
-    TaskFn: Send + Sync + 'static + Fn(usize, &Workload) -> OutputFut,
+    TaskFn: Send + Sync + 'static + Fn(u64, &Workload) -> OutputFut,
     OutputFut: Send + Future<Output = anyhow::Result<Output>>,
     OutputFn: Send + Sync + 'static + FnMut(Output) -> anyhow::Result<()>,
     Output: Send + 'static,
@@ -30,10 +30,10 @@ where
         }
     }
 
-    pub async fn run(mut self, num_tasks: usize, starting_task_number: usize) -> anyhow::Result<()> {
+    pub async fn run(mut self, num_tasks: usize, starting_task_number: u64) -> anyhow::Result<()> {
         const MAX_RETRIES: usize = 5;
 
-        let next_task_num = Arc::new(AtomicUsize::new(starting_task_number));
+        let next_task_num = Arc::new(AtomicU64::new(starting_task_number));
         let (output_tx, mut output_rx) = tokio::sync::mpsc::channel(10);
 
         // Kick off all of the tasks.

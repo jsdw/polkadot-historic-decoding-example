@@ -45,7 +45,11 @@ struct Opts {
 
     /// Block number to start from.
     #[arg(short, long)]
-    block: Option<u64>
+    block: Option<u64>,
+
+    /// Fetch the metadata at the block given and exit.
+    #[arg(short, long)]
+    metadata: bool,
 }
 
 const RPC_NODE_URLS: [&str; 7] = [
@@ -72,15 +76,16 @@ struct RunnerState {
 async fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
 
+    let start_block_num = opts.block.unwrap_or_default();
+    let metadata = opts.metadata;
     let errors_only = opts.errors_only;
     let continue_on_error = opts.continue_on_error;
     let connections = opts.connections.unwrap_or(RPC_NODE_URLS.len());
-    let start_block_num = opts.block.unwrap_or_default();
     let historic_types_str = std::fs::read_to_string(&opts.types)
         .with_context(|| "Could not load historic types")?;
 
     // Use our default or built-in URLs if not provided.
-    let urls = opts.url
+    let urls = RoundRobin::new(opts.url
         .as_ref()
         .map(|urls| {
             urls.split(',')
@@ -92,7 +97,25 @@ async fn main() -> anyhow::Result<()> {
                 .iter()
                 .map(|url| url.to_string())
                 .collect()
-        });
+        }));
+
+    // Just fetch metadata and exit if --metadata flag is given
+    if metadata {
+        let block_number = start_block_num;
+        let url = urls.get();
+        let rpc_client = RpcClient::from_insecure_url(url).await?;
+        let rpcs = LegacyRpcMethods::<SubstrateConfig>::new(rpc_client.clone());
+        let block_hash = rpcs.chain_get_block_hash(Some(NumberOrHex::Number(block_number as u64)))
+            .await
+            .with_context(|| "Could not fetch block hash")?
+            .ok_or_else(|| anyhow!("Couldn't find block {block_number}"))?;
+        let metadata = state_get_metadata(&rpc_client, Some(block_hash))
+            .await
+            .with_context(|| "Could not fetch metadata")?;
+
+        serde_json::to_writer_pretty(std::io::stdout(), &metadata)?;
+        return Ok(())
+    }
 
     // Our base type mappings that we'll use to decode pre-V14 blocks.
     let historic_types: ChainTypeRegistry = serde_yaml::from_str(&historic_types_str)
@@ -102,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
     // Create a runner to download and decode blocks in parallel.
     let runner = Runner::new(
         // Initial state; each task fetches the next URl to connect to.
-        RoundRobin::new(urls),
+        urls,
         // Turn each URL into some state that we'll reuse to fetch a bunch of blocks. This reruns on error.
         |_n, urls| {
             let url = urls.get().to_owned();
@@ -127,24 +150,21 @@ async fn main() -> anyhow::Result<()> {
             async move {
                 let mut state = state.lock().await;
 
-                let block_hash = state.rpcs.chain_get_block_hash(Some(NumberOrHex::Number(block_number as u64)))
+                // Check the last block to see if a runtime update happened. Runtime updates
+                // take effect the block after they are applied.
+                let runtime_update_block = block_number.saturating_sub(1);
+                let runtime_update_block_hash = chain_get_block_hash(&state.rpcs, runtime_update_block).await?;
+                let runtime_version = state.rpcs.state_get_runtime_version(Some(runtime_update_block_hash))
                     .await
-                    .with_context(|| "Could not fetch block hash")?
-                    .ok_or_else(|| anyhow!("Couldn't find block {block_number}"))?;
-
-                let runtime_version = state.rpcs.state_get_runtime_version(Some(block_hash))
-                    .await
-                    .with_context(|| format!("Could not fetch runtime version for block {block_number} with hash {block_hash}"))?;
+                    .with_context(|| format!("Could not fetch runtime version for block {runtime_update_block} with hash {runtime_update_block_hash}"))?;
 
                 let this_spec_version = runtime_version.spec_version;
                 if this_spec_version != state.current_spec_version || state.current_metadata.is_none() || state.current_types_for_spec.is_none() {
                     // Fetch new metadata for this spec version.
-                    let metadata = state_get_metadata(&state.rpc_client, Some(block_hash))
-                        .await
-                        .with_context(|| "Could not fetch metadata")?;
+                    let metadata = state_get_metadata(&state.rpc_client, Some(runtime_update_block_hash)).await?;
 
                     // Prepare new historic type info for this new spec/metadata. Extend the type info
-                    // with Call types so that things like utility.batch "Just Work" based on metadata.
+                    // with Call types from the metadataa so that things like utility.batch "Just Work".
                     let mut historic_types_for_spec = historic_types.for_spec_version(this_spec_version as u64).to_owned();
                     extend_with_call_info(&mut historic_types_for_spec, &metadata)?;
 
@@ -159,15 +179,16 @@ async fn main() -> anyhow::Result<()> {
                 let current_metadata = state.current_metadata.as_ref().unwrap();
                 let current_types_for_spec = state.current_types_for_spec.as_ref().unwrap();
 
+                let block_hash = chain_get_block_hash(&state.rpcs, block_number).await?;
                 let block_body = state.rpcs.chain_get_block(Some(block_hash))
                     .await
                     .with_context(|| "Could not fetch block body")?
                     .expect("block should exist");
 
                 let extrinsics = block_body.block.extrinsics.into_iter().map(|ext| {
-                    let ext_bytes = ext.0;
-                    decode_extrinsic(&ext_bytes, current_metadata, current_types_for_spec)
-                        .with_context(|| format!("Failed to decode extrinsic (block {block_number}, spec version {this_spec_version})"))
+                    let ext_bytes = &ext.0;
+                    let decoded = decode_extrinsic(ext_bytes, current_metadata, current_types_for_spec);
+                    (ext, decoded)
                 }).collect();
 
                 Ok(Output {
@@ -179,73 +200,77 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         // Log the output. This runs sequentially, in order of task numbers.
-        {
-            let mut last_spec_version = None;
+        move |output: Output| {
+            let mut stdout = std::io::stdout().lock();
 
-            move |output: Output| {
-                let mut stdout = std::io::stdout().lock();
+            let block_number = output.block_number;
+            let block_hash = output.block_hash;
+            let spec_version = output.spec_version;
+            let extrinsics = output.extrinsics;
+            let is_error = extrinsics.iter().any(|(_,e)| e.is_err());
+            let should_print_header = !errors_only || (errors_only && is_error);
+            let should_print_success = !errors_only;
 
-                let block_number = output.block_number;
-                let block_hash = output.block_hash;
-                let spec_version = output.spec_version;
-                let extrinsics = output.extrinsics;
-                let is_error = extrinsics.iter().any(|e| e.is_err());
-                let should_print_header = !errors_only || (errors_only && is_error);
-                let should_print_success = !errors_only;
+            if should_print_header {
+                writeln!(stdout, "==============================================")?;
+                writeln!(stdout, "Block {block_number} ({})", subxt::utils::to_hex(block_hash))?;
+                writeln!(stdout, "Spec version {spec_version}")?;
+            }
 
-                if should_print_header {
-                    writeln!(stdout, "==============================================")?;
-                    writeln!(stdout, "Block {block_number} ({})", subxt::utils::to_hex(block_hash))?;
-                }
-
-                if last_spec_version.is_none() || Some(spec_version) != last_spec_version {
-                    writeln!(stdout, "Spec version changed to {spec_version}")?;
-                    last_spec_version = Some(spec_version)
-                }
-
-                for (ext_idx, ext) in extrinsics.into_iter().enumerate() {
-                    match ext {
-                        Ok(Extrinsic::V4Unsigned { call_data }) => {
-                            if should_print_success {
-                                writeln!(stdout, "  {}.{}:", call_data.pallet_name, call_data.call_name)?;
-                                print_call_data(&mut stdout, &call_data)?;
-                            }
-                        },
-                        Ok(Extrinsic::V4Signed { address, signature, signed_exts, call_data }) => {
-                            if should_print_success {
-                                writeln!(stdout, "  {}.{}:", call_data.pallet_name, call_data.call_name)?;
-                                writeln!(stdout, "    Address: {address}")?;
-                                writeln!(stdout, "    Signature: {signature}")?;
-                                print_signed_exts(&mut stdout, &signed_exts)?;
-                                print_call_data(&mut stdout, &call_data)?;
-                            }
-                        },
-                        Err(e) => {
-                            writeln!(stdout, "Error decoding extrinsic {ext_idx}: {e:?}")?;
+            for (ext_idx, (_ext_bytes, ext_decoded)) in extrinsics.into_iter().enumerate() {
+                match ext_decoded {
+                    Ok(Extrinsic::V4Unsigned { call_data }) => {
+                        if should_print_success {
+                            writeln!(stdout, "  {}.{}:", call_data.pallet_name, call_data.call_name)?;
+                            print_call_data(&mut stdout, &call_data)?;
                         }
+                    },
+                    Ok(Extrinsic::V4Signed { address, signature, signed_exts, call_data }) => {
+                        if should_print_success {
+                            writeln!(stdout, "  {}.{}:", call_data.pallet_name, call_data.call_name)?;
+                            writeln!(stdout, "    Address: {address}")?;
+                            writeln!(stdout, "    Signature: {signature}")?;
+                            print_signed_exts(&mut stdout, &signed_exts)?;
+                            print_call_data(&mut stdout, &call_data)?;
+                        }
+                    },
+                    Err(e) => {
+                        // let bytes_hex = serde_json::to_string(&ext_bytes).unwrap();
+                        writeln!(stdout, "Error decoding extrinsic {ext_idx}: {e:?}")?;
+                        break;
                     }
                 }
+            }
 
-                if !continue_on_error && is_error {
-                    Err(anyhow!("Stopping: error decoding extrinsic"))
-                } else {
-                    Ok(())
-                }
+            if !continue_on_error && is_error {
+                Err(anyhow!("Stopping: error decoding extrinsic"))
+            } else {
+                Ok(())
             }
         }
     );
 
-    if let Err(e) = runner.run(connections, start_block_num as usize).await {
+    if let Err(e) = runner.run(connections, start_block_num).await {
         eprintln!("{e}");
     }
     Ok(())
 }
 
+async fn chain_get_block_hash(rpcs: &LegacyRpcMethods<SubstrateConfig>, block_number: u64) -> anyhow::Result<<SubstrateConfig as Config>::Hash> {
+    let block_hash = rpcs.chain_get_block_hash(Some(NumberOrHex::Number(block_number)))
+        .await
+        .with_context(|| "Could not fetch block hash")?
+        .ok_or_else(|| anyhow!("Couldn't find block {block_number}"))?;
+    Ok(block_hash)
+}
+
 async fn state_get_metadata(client: &RpcClient, at: Option<<SubstrateConfig as Config>::Hash>) -> anyhow::Result<frame_metadata::RuntimeMetadata> {
     let bytes: Bytes = client
         .request("state_getMetadata", rpc_params![at])
-        .await?;
-    let metadata = frame_metadata::RuntimeMetadataPrefixed::decode(&mut &bytes[..])?;
+        .await
+        .with_context(|| "Could not fetch metadata")?;
+    let metadata = frame_metadata::RuntimeMetadataPrefixed::decode(&mut &bytes[..])
+        .with_context(|| "Could not decode metadata")?;
     Ok(metadata.1)
 }
 
@@ -285,7 +310,7 @@ fn write_value<W: std::io::Write, T: std::fmt::Display>(w: W, value: &Value<T>) 
 
 fn write_value_fmt<W: std::fmt::Write, T: std::fmt::Display>(w: W, value: &Value<T>, leading_indent: impl Into<String>) -> core::fmt::Result {
     scale_value::stringify::to_writer_custom()
-        .spaced()
+        .pretty()
         .leading_indent(leading_indent.into())
         .format_context(|type_id, w: &mut W| write!(w, "{type_id}"))
         .add_custom_formatter(|v, w: &mut W| scale_value::stringify::custom_formatters::format_hex(v,w))
@@ -304,7 +329,7 @@ fn write_value_fmt<W: std::fmt::Write, T: std::fmt::Display>(w: W, value: &Value
 
 struct Output {
     spec_version: u32,
-    block_number: usize,
+    block_number: u64,
     block_hash: H256,
-    extrinsics: Vec<Result<Extrinsic, anyhow::Error>>
+    extrinsics: Vec<(Bytes, Result<Extrinsic, anyhow::Error>)>
 }

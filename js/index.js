@@ -9,7 +9,7 @@ args
     .option('block', 'Block number to obtain', undefined, b => parseInt(b, 10))
 
 const flags = args.parse(process.argv)
-const url = flags.url ?? exitWithError("--url needs to be provided")
+const url = flags.url ?? "wss://polkadot-public-rpc.blockops.network/ws"
 const blockNumber = flags.block ?? exitWithError("--block number needs to be provided")
 
 console.log(`connecting to url: ${url}`)

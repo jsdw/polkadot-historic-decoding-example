@@ -1,5 +1,12 @@
 global:
   types:
+    # Babe
+    EquivocationProof<Header>:
+      offender: AuthorityId
+      slotNumber: u64
+      firstHeader: Header
+      secondHeader: Header
+
     # System
     Perbill: u32
     ChangesTrieConfiguration:
@@ -15,6 +22,7 @@ global:
     schedule::Period<BN>: '(BN, u32)'
     schedule::Priority: u8
     <T as Trait>::Call: builtin::Call
+    <T as Config>::Call: builtin::Call
 
     # Timestamp
     T::Moment: u64
@@ -25,7 +33,7 @@ global:
 
     # Balances
     <T::Lookup as StaticLookup>::Source: AccountId
-    T::Balance: u64
+    T::Balance: Balance
 
     # Authorship
     T::Header:
@@ -63,8 +71,7 @@ global:
     ConsensusEngineId: '[u8; 4]'
 
     # Staking
-    BalanceOf<T>: u128
-    RewardDestination:
+    RewardDestination<AccountId>:
       _enum:
         Staked: []
         Stash: []
@@ -75,8 +82,7 @@ global:
       commission: Compact<Perbill>
     EraIndex: u32
     ValidatorIndex: u32
-    CompactAssignments: CompactAssignmentsWith16
-    CompactAssignmentsWith16:
+    CompactAssignments:
       votes1: 'Vec<(NominatorIndex, [CompactScore; 0], ValidatorIndex)>'
       votes2: 'Vec<(NominatorIndex, [CompactScore; 1], ValidatorIndex)>'
       votes3: 'Vec<(NominatorIndex, [CompactScore; 2], ValidatorIndex)>'
@@ -93,41 +99,29 @@ global:
       votes14: 'Vec<(NominatorIndex, [CompactScore; 13], ValidatorIndex)>'
       votes15: 'Vec<(NominatorIndex, [CompactScore; 14], ValidatorIndex)>'
       votes16: 'Vec<(NominatorIndex, [CompactScore; 15], ValidatorIndex)>'
-    # CompactAssignmentsWith16:
-    #   votes1: Vec<(NominatorIndexCompact, ValidatorIndexCompact)>
-    #   votes2: Vec<(NominatorIndexCompact, CompactScoreCompact, ValidatorIndexCompact)>
-    #   votes3: Vec<(NominatorIndexCompact, [CompactScoreCompact; 2], ValidatorIndexCompact)>
-    #   votes4: Vec<(NominatorIndexCompact, [CompactScoreCompact; 3], ValidatorIndexCompact)>
-    #   votes5: Vec<(NominatorIndexCompact, [CompactScoreCompact; 4], ValidatorIndexCompact)>
-    #   votes6: Vec<(NominatorIndexCompact, [CompactScoreCompact; 5], ValidatorIndexCompact)>
-    #   votes7: Vec<(NominatorIndexCompact, [CompactScoreCompact; 6], ValidatorIndexCompact)>
-    #   votes8: Vec<(NominatorIndexCompact, [CompactScoreCompact; 7], ValidatorIndexCompact)>
-    #   votes9: Vec<(NominatorIndexCompact, [CompactScoreCompact; 8], ValidatorIndexCompact)>
-    #   votes10: Vec<(NominatorIndexCompact, [CompactScoreCompact; 9], ValidatorIndexCompact)>
-    #   votes11: Vec<(NominatorIndexCompact, [CompactScoreCompact; 10], ValidatorIndexCompact)>
-    #   votes12: Vec<(NominatorIndexCompact, [CompactScoreCompact; 11], ValidatorIndexCompact)>
-    #   votes13: Vec<(NominatorIndexCompact, [CompactScoreCompact; 12], ValidatorIndexCompact)>
-    #   votes14: Vec<(NominatorIndexCompact, [CompactScoreCompact; 13], ValidatorIndexCompact)>
-    #   votes15: Vec<(NominatorIndexCompact, [CompactScoreCompact; 14], ValidatorIndexCompact)>
-    #   votes16: Vec<(NominatorIndexCompact, [CompactScoreCompact; 15], ValidatorIndexCompact)>
     PhragmenScore: '[u128; 3]'
     ElectionSize:
       validators: Compact<ValidatorIndex>
       nominators: Compact<NominatorIndex>
     NominatorIndex: u32
-    NominatorIndexCompact: Compact<NominatorIndex>
     CompactScore: (ValidatorIndex, OffchainAccuracy)
-    CompactScoreCompact: Compact<CompactScore>
     ValidatorIndex: u16
-    ValidatorIndexCompact: Compact<ValidatorIndex>
     OffchainAccuracy: PerU16
     PerU16: u16
     ElectionScore: "[u128; 3]"
     Percent: u8
 
+    # ElectionProviderMultiPhase
+    RawSolution<T>:
+      compact: CompactAssignments
+      score: ElectionScore
+      round: u32
+    SolutionOrSnapshotSize:
+      voters: Compact<u32>
+      targets: Compact<u32>
+
     # Session
-    T::Keys: SessionKeys5
-    SessionKeys5: (AccountId, AccountId, AccountId, AccountId, AccountId)
+    T::Keys: (AccountId, AccountId, AccountId, AccountId, AccountId)
 
     # Grandpa
     T::Hash: H256
@@ -137,6 +131,21 @@ global:
       trieNodes: Vec<Bytes>
       validatorCount: ValidatorCount
     ValidatorCount: u32
+    EquivocationProof<Hash, BlockNumber>:
+      setId: u64
+      equivocation: GrandpaEquivocation<Hash, BlockNumber>
+    GrandpaEquivocation<Hash, BlockNumber>:
+      _enum:
+        Prevote: GrandpaEquivocationValue<Hash, BlockNumber>
+        Precommit: GrandpaEquivocationValue<Hash, BlockNumber>
+    GrandpaEquivocationValue<Hash, BlockNumber>:
+      roundNumber: u64
+      identity: AuthorityId
+      first: '(GrandpaPrevote<Hash, BlockNumber>, AuthoritySignature)'
+      second: '(GrandpaPrevote<Hash, BlockNumber>, AuthoritySignature)'
+    GrandpaPrevote<Hash, BlockNumber>:
+      targetHash: Hash,
+      targetNumber: BlockNumber
 
     # ImOnline
     Heartbeat<BN>:
@@ -153,11 +162,11 @@ global:
     AccountVote<Balance>:
       _enum:
         Standard:
-          aye: Balance
-          nay: Balance
-        Split:
           vote: Vote
           balance: Balance
+        Split:
+          aye: Balance
+          nay: Balance
     Vote: u8 # most significant bit for "aye", conviction 0001-0101
     Conviction:
       _enum:
@@ -179,6 +188,7 @@ global:
     # Council
     MemberCount: u32
     <T as Trait<I>>::Proposal: builtin::Call
+    <T as Config<I>>::Proposal: builtin::Call
     ProposalIndex: u32
     Weight: u64 # v1 = u32? but we seem to need u64 on block 29231. v2 = u64, v3 = { refTime: Compact<u64>, proofSize: Compact<u64> }
 
@@ -264,7 +274,7 @@ global:
       pgpFingerprint: Option<H160>
       image: Data
       twitter: Data
-
+    IdentityInfoAdditional: (Data, Data)
     RegistrarIndex: u32
     Judgement<Balance>:
       _enum:
@@ -275,7 +285,10 @@ global:
         OutOfDate: []
         LowQuality: []
         Erroneous: []
+    IdentityFields: u64 # from least significant bit to most, 1 bit enabled for Display, Legal, Web, Riot, Email, PgpFingerprint, Image, Twitter
 
+    # Poll
+    Approvals: "[bool; 4]"
     Data:
       _enum:
         None: [] # 0
@@ -321,7 +334,6 @@ global:
         ShaThree256: H256 # 37
 
     # Proxy
-
     T::ProxyType:
       _enum:
         - Any
@@ -332,10 +344,29 @@ global:
         - IdentityJudgement
         - CancelProxy
         - Auction
+    AccountValidity:
+      _enum:
+        - Invalid
+        - Initiated
+        - Pending
+        - ValidLow
+        - ValidHigh
+        - Completed
+    Permill: u32
+    CallHashOf<T>: Hash
+
+    # MultiSig
+    OpaqueCall: Vec<u8>
+
+    # Treasury
+    BountyIndex: u32
 
     # Manually defined types below:
 
-    Balance: u64
+    Balance: u128
+    BalanceOf<T>: Balance
+    BalanceOf<T, I>: Balance
+
     Index: u32
     AccountId32: "[u8; 32]"
     AccountId: AccountId32
@@ -362,8 +393,11 @@ global:
 
     MultiAddress<AccountId, AccountIndex>:
       _enum:
-        Id: AccountId,
+        Id: AccountId
         Index: AccountIndex
+        Raw: Bytes
+        Address32: H256
+        Address20: H160
 
     MultiSignature:
       _enum:
@@ -373,12 +407,12 @@ global:
 
     # imOnline
     OpaqueNetworkState:
-      peerId: OpaquePeerId,
+      peerId: OpaquePeerId
       externalAddresses: Vec<OpaqueMultiaddr>
     OpaquePeerId: Bytes
     OpaqueMultiaddr: Bytes
     AuthIndex: u32
-    AuthoritySignature: Signature,
+    AuthoritySignature: Signature
 
     # Hardcoded types for old metadatas that don't know about them.
     hardcoded::ExtrinsicAddress: AccountId32
@@ -412,5 +446,39 @@ global:
     ValidateDoubleVoteReports: []
     DisallowSigned: []
 
-# Same format as the above, but an array of:
-forSpec: []
+forSpec:
+  - range: [23, null]
+    types:
+      RewardDestination<AccountId>:
+        _enum:
+          Staked: []
+          Stash: []
+          Controller: []
+          Account: AccountId
+          None: []
+      CompactScoreCompact: (Compact<ValidatorIndex>, Compact<OffchainAccuracy>)
+      CompactAssignments:
+        votes1: Vec<(Compact<NominatorIndex>, Compact<ValidatorIndex>)>
+        votes2: Vec<(Compact<NominatorIndex>, CompactScoreCompact, Compact<ValidatorIndex>)>
+        votes3: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 2], Compact<ValidatorIndex>)>
+        votes4: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 3], Compact<ValidatorIndex>)>
+        votes5: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 4], Compact<ValidatorIndex>)>
+        votes6: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 5], Compact<ValidatorIndex>)>
+        votes7: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 6], Compact<ValidatorIndex>)>
+        votes8: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 7], Compact<ValidatorIndex>)>
+        votes9: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 8], Compact<ValidatorIndex>)>
+        votes10: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 9], Compact<ValidatorIndex>)>
+        votes11: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 10], Compact<ValidatorIndex>)>
+        votes12: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 11], Compact<ValidatorIndex>)>
+        votes13: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 12], Compact<ValidatorIndex>)>
+        votes14: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 13], Compact<ValidatorIndex>)>
+        votes15: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 14], Compact<ValidatorIndex>)>
+        votes16: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 15], Compact<ValidatorIndex>)>
+  - range: [28, null]
+    types:
+      hardcoded::ExtrinsicAddress: MultiAddress<AccountId32,u32>
+      <T::Lookup as StaticLookup>::Source: MultiAddress<AccountId32,u32>
+      T::Keys: (AccountId, AccountId, AccountId, AccountId, AccountId, AccountId)
+      ValidatorPrefs:
+        commission: Compact<Perbill>
+        blocked: bool
