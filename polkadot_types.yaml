@@ -274,6 +274,7 @@ global:
       pgpFingerprint: Option<H160>
       image: Data
       twitter: Data
+    IdentityInfo<MaxAdditionalFields>: IdentityInfo
     IdentityInfoAdditional: (Data, Data)
     RegistrarIndex: u32
     Judgement<Balance>:

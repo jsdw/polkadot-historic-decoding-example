@@ -11,14 +11,10 @@ hex = "0.4.3"
 parity-scale-codec = "3.6.12"
 scale-decode = "0.13.1"
 scale-info = "2.11.3"
-scale-info-legacy = "0.1.1"
+scale-info-legacy = "0.2.0"
 scale-type-resolver = "0.2.0"
-scale-value = "0.16.1"
+scale-value = "0.16.2"
 serde_json = "1.0.117"
 serde_yaml = "0.9.34"
 subxt = "0.37.0"
 tokio = { version = "1.38.0", features = ["full"] }
-
-[patch.crates-io]
-scale-value = { path = "../scale-value" }
-scale-info-legacy = { path = "../scale-info-legacy" }
