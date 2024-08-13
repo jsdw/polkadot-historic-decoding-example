@@ -150,7 +150,7 @@ where
         writeln!(s, "{} leftover bytes found when trying to decode {}.{} with args:", cursor.len(), extrinsic_info.pallet_name, extrinsic_info.call_name)?;
         for (arg_name, arg_value) in args {
             write!(s, "  {arg_name}: ")?;
-            crate::write_value_fmt(&mut s, &arg_value, "")?;
+            crate::utils::write_value_fmt(&mut s, &arg_value, "")?;
             writeln!(s)?;
         }
 
