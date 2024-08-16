@@ -14,6 +14,7 @@ scale-info = "2.11.3"
 scale-info-legacy = "0.2.0"
 scale-type-resolver = "0.2.0"
 scale-value = "0.16.2"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.117"
 serde_yaml = "0.9.34"
 subxt = "0.37.0"

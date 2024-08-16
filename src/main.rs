@@ -15,7 +15,7 @@ enum Commands {
     FetchMetadata(commands::fetch_metadata::Opts),
     /// Find the block numbers where spec version changes happen.
     /// This is where the metadata/node API may have changed.
-    FinsSpecChanges(commands::find_spec_changes::Opts),
+    FindSpecChanges(commands::find_spec_changes::Opts),
 }
 
 #[tokio::main]
@@ -29,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::FetchMetadata(opts) => {
             commands::fetch_metadata::run(opts).await?;
         },
-        Commands::FinsSpecChanges(opts) => {
+        Commands::FindSpecChanges(opts) => {
             commands::find_spec_changes::run(opts).await?;
         }
     }
