@@ -1,6 +1,6 @@
 use clap::Parser;
 use crate::utils;
-use crate::binary_chopper::{BinaryChopper,Next};
+use crate::utils::binary_chopper::{BinaryChopper,Next};
 use anyhow::{anyhow,Context};
 use subxt::PolkadotConfig;
 use subxt::backend::{

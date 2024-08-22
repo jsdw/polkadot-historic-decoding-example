@@ -1,16 +1,15 @@
-use crate::extrinsic_decoder::{decode_extrinsic, Extrinsic, ExtrinsicCallData};
-use crate::extrinsic_type_info::extend_with_call_info;
+use crate::decoding::extrinsic_decoder::{decode_extrinsic, Extrinsic, ExtrinsicCallData};
+use crate::decoding::extrinsic_type_info::extend_with_call_info;
 use frame_metadata::RuntimeMetadata;
 use scale_info_legacy::{ChainTypeRegistry, TypeRegistrySet};
 use std::path::PathBuf;
 use clap::Parser;
 use subxt::{backend::{
-    legacy::{ rpc_methods::{Bytes, NumberOrHex}, LegacyRpcMethods }, rpc::{rpc_params, RpcClient}
+    legacy::{ rpc_methods::{Bytes, NumberOrHex}, LegacyRpcMethods }, rpc::RpcClient
 }, utils::H256};
 use subxt::{Config, PolkadotConfig};
-use subxt::ext::codec::Decode;
 use anyhow::{anyhow, Context};
-use crate::runner::{Runner, RoundRobin};
+use crate::utils::runner::{Runner, RoundRobin};
 use crate::utils;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -23,12 +22,12 @@ pub struct Opts {
     #[arg(short, long)]
     types: PathBuf,
 
-    /// URL of the node to connect to. 
+    /// URL of the node(s) to connect to. 
     /// Defaults to using Polkadot RPC URLs if not given.
     #[arg(short, long)]
     url: Option<String>,
 
-    /// How many connections to establish to each url.
+    /// How many connections to establish.
     #[arg(long)]
     connections: Option<usize>,
 
@@ -100,7 +99,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                 let this_spec_version = runtime_version.spec_version;
                 if this_spec_version != state.current_spec_version || state.current_metadata.is_none() || state.current_types_for_spec.is_none() {
                     // Fetch new metadata for this spec version.
-                    let metadata = state_get_metadata(&state.rpc_client, Some(runtime_update_block_hash)).await?;
+                    let metadata = super::fetch_metadata::state_get_metadata(&state.rpc_client, Some(runtime_update_block_hash)).await?;
 
                     // Prepare new historic type info for this new spec/metadata. Extend the type info
                     // with Call types from the metadataa so that things like utility.batch "Just Work".
@@ -198,16 +197,6 @@ async fn chain_get_block_hash(rpcs: &LegacyRpcMethods<PolkadotConfig>, block_num
         .with_context(|| "Could not fetch block hash")?
         .ok_or_else(|| anyhow!("Couldn't find block {block_number}"))?;
     Ok(block_hash)
-}
-
-async fn state_get_metadata(client: &RpcClient, at: Option<<PolkadotConfig as Config>::Hash>) -> anyhow::Result<frame_metadata::RuntimeMetadata> {
-    let bytes: Bytes = client
-        .request("state_getMetadata", rpc_params![at])
-        .await
-        .with_context(|| "Could not fetch metadata")?;
-    let metadata = frame_metadata::RuntimeMetadataPrefixed::decode(&mut &bytes[..])
-        .with_context(|| "Could not decode metadata")?;
-    Ok(metadata.1)
 }
 
 fn print_call_data<W: std::io::Write>(mut w: W, call_data: &ExtrinsicCallData) -> anyhow::Result<()> {

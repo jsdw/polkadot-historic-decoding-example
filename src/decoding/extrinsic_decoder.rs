@@ -1,4 +1,4 @@
-use crate::extrinsic_type_info::ExtrinsicTypeInfo;
+use super::extrinsic_type_info::ExtrinsicTypeInfo;
 use scale_info_legacy::TypeRegistrySet;
 use scale_type_resolver::TypeResolver;
 use parity_scale_codec::{Decode, Compact};

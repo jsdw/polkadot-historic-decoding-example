@@ -1,3 +1,6 @@
+pub mod binary_chopper;
+pub mod runner;
+
 use scale_value::{Composite, Value, ValueDef};
 
 /// Write out a pretty Value using `std::io::Write`.

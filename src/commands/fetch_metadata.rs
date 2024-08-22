@@ -5,7 +5,7 @@ use subxt::backend::{
 use subxt::{Config, PolkadotConfig};
 use subxt::ext::codec::Decode;
 use anyhow::{anyhow, Context};
-use crate::runner::RoundRobin;
+use crate::utils::runner::RoundRobin;
 use crate::utils;
 
 #[derive(Parser)]
@@ -43,7 +43,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn state_get_metadata(client: &RpcClient, at: Option<<PolkadotConfig as Config>::Hash>) -> anyhow::Result<frame_metadata::RuntimeMetadata> {
+pub(super) async fn state_get_metadata(client: &RpcClient, at: Option<<PolkadotConfig as Config>::Hash>) -> anyhow::Result<frame_metadata::RuntimeMetadata> {
     let bytes: Bytes = client
         .request("state_getMetadata", rpc_params![at])
         .await
