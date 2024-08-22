@@ -3,6 +3,14 @@ pub mod runner;
 
 use scale_value::{Composite, Value, ValueDef};
 
+/// A utility function to unwrap the `DecodeDifferent` enum in earlier metadata versions.
+pub fn as_decoded<A, B>(item: &frame_metadata::decode_different::DecodeDifferent<A, B>) -> &B {
+    match item {
+        frame_metadata::decode_different::DecodeDifferent::Encode(_a) => panic!("Expecting decoded data"),
+        frame_metadata::decode_different::DecodeDifferent::Decoded(b) => b,
+    }
+}
+
 /// Write out a pretty Value using `std::io::Write`.
 pub fn write_value<W: std::io::Write, T: std::fmt::Display>(w: W, value: &Value<T>) -> core::fmt::Result {
     // Our stdout lock is io::Write but we need fmt::Write below.

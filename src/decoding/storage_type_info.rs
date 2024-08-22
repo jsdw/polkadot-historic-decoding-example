@@ -1,8 +1,9 @@
 use scale_info_legacy::LookupName;
 use frame_metadata::decode_different::DecodeDifferent;
 use anyhow::anyhow;
+use crate::utils::as_decoded;
 
-/// This is implemented for all metadatas exposed from `frame_metadata` and is respondible for extracting the
+/// This is implemented for all metadatas exposed from `frame_metadata` and is responsible for extracting the
 /// type IDs and related info needed to decode storage entries.
 pub trait StorageTypeInfo {
     type TypeId;
@@ -348,12 +349,4 @@ fn lookup_name_or_err(ty: &str, pallet_name: &str) -> anyhow::Result<LookupName>
         .map_err(|e| anyhow!("Could not parse type name {ty}: {e}"))?
         .in_pallet(pallet_name);
     Ok(id)
-}
-
-/// A utility function to unwrap the `DecodeDifferent` enum in earlier metadata versions.
-fn as_decoded<A, B>(item: &DecodeDifferent<A, B>) -> &B {
-    match item {
-        DecodeDifferent::Encode(_a) => panic!("Expecting decoded data"),
-        DecodeDifferent::Decoded(b) => b,
-    }
 }

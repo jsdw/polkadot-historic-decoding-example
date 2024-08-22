@@ -1,8 +1,8 @@
-use frame_metadata::decode_different::DecodeDifferent;
 use scale_info_legacy::{LookupName, TypeRegistry};
 use anyhow::{anyhow, bail};
+use crate::utils::as_decoded;
 
-/// This is implemented for all metadatas exposed from `frame_metadata` and is respondible for extracting the
+/// This is implemented for all metadatas exposed from `frame_metadata` and is responsible for extracting the
 /// type IDs that we need in order to decode extrinsics.
 pub trait ExtrinsicTypeInfo {
     type TypeId;
@@ -436,12 +436,4 @@ pub fn print_call_types(types: &scale_info_legacy::TypeRegistrySet) {
         });
 
     let _ = types.resolve_type_str("builtin::Call", module_visitor);
-}
-
-/// A utility function to unwrap the `DecodeDifferent` enum in earlier metadata versions.
-fn as_decoded<A, B>(item: &DecodeDifferent<A, B>) -> &B {
-    match item {
-        DecodeDifferent::Encode(_a) => panic!("Expecting decoded data"),
-        DecodeDifferent::Decoded(b) => b,
-    }
 }
