@@ -82,15 +82,9 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
 }
 
 fn print_spec_version_updates(updates: &[(u32, u32)]) -> Result<(), serde_json::Error> {
-    #[derive(serde::Serialize)]
-    struct Update {
-        block: u32,
-        spec_version: u32
-    }
-
     let updates: Vec<_> = updates
         .iter()
-        .map(|&(block, spec_version)| Update { block, spec_version })
+        .map(|&(block, spec_version)| SpecVersionUpdate { block, spec_version })
         .collect();
 
     let stdout = std::io::stdout().lock();
@@ -141,4 +135,10 @@ where
             },
         }
     }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SpecVersionUpdate {
+    pub block: u32,
+    pub spec_version: u32
 }

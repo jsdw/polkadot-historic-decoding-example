@@ -14,6 +14,21 @@ pub struct StorageKey {
     hasher: StorageHasher,
 }
 
+/// Is this storage entry iterable? If so, we'll iterate it. If not, we can just retrieve the single entry.
+pub fn is_iterable(pallet_name: &str, storage_entry: &str, metadata: &RuntimeMetadata) -> anyhow::Result<bool> {
+    match metadata {
+        RuntimeMetadata::V8(m) => is_iterable_inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V9(m) => is_iterable_inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V10(m) => is_iterable_inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V11(m) => is_iterable_inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V12(m) => is_iterable_inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V13(m) => is_iterable_inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V14(m) => is_iterable_inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V15(m) => is_iterable_inner(pallet_name, storage_entry, m),
+        _ => bail!("Only metadata V8 - V15 is supported")
+    }
+}
+
 /// Decode the bytes representing some storage key. Here, we expect all of the key bytes including the hashed pallet name and storage entry.
 pub fn decode_storage_keys(pallet_name: &str, storage_entry: &str, bytes: &[u8], metadata: &RuntimeMetadata, historic_types: &TypeRegistrySet) -> anyhow::Result<StorageKeys> {
     match metadata {
@@ -44,6 +59,15 @@ pub fn decode_storage_value(pallet_name: &str, storage_entry: &str, bytes: &[u8]
     }
 }
 
+fn is_iterable_inner<Info>(pallet_name: &str, storage_entry: &str, info: &Info) -> anyhow::Result<bool> 
+where
+    Info: StorageTypeInfo
+{
+    let storage_info = info.get_storage_info(pallet_name, storage_entry)
+        .with_context(|| "Cannot find storage entry")?;
+
+    Ok(!storage_info.keys.is_empty())
+}
 
 fn decode_storage_keys_inner<Info, Resolver>(pallet_name: &str, storage_entry: &str, bytes: &[u8], info: &Info, type_resolver: &Resolver) -> anyhow::Result<StorageKeys>
 where

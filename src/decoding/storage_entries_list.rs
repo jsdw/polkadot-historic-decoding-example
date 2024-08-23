@@ -1,4 +1,25 @@
+use frame_metadata::RuntimeMetadata;
+use anyhow::bail;
+use std::borrow::Cow;
+use std::collections::VecDeque;
+
 use crate::utils::as_decoded;
+
+/// fetch the list of available storage entries from some metadata.
+pub fn get_storage_entries(metadata: &RuntimeMetadata) -> anyhow::Result<VecDeque<StorageEntry<'static>>> {
+   let entries = match metadata {
+        RuntimeMetadata::V8(m) => m.storage_entries_list().map(|e| e.into_owned()).collect(),
+        RuntimeMetadata::V9(m) => m.storage_entries_list().map(|e| e.into_owned()).collect(),
+        RuntimeMetadata::V10(m) => m.storage_entries_list().map(|e| e.into_owned()).collect(),
+        RuntimeMetadata::V11(m) => m.storage_entries_list().map(|e| e.into_owned()).collect(),
+        RuntimeMetadata::V12(m) => m.storage_entries_list().map(|e| e.into_owned()).collect(),
+        RuntimeMetadata::V13(m) => m.storage_entries_list().map(|e| e.into_owned()).collect(),
+        RuntimeMetadata::V14(m) => m.storage_entries_list().map(|e| e.into_owned()).collect(),
+        RuntimeMetadata::V15(m) => m.storage_entries_list().map(|e| e.into_owned()).collect(),
+        _ => bail!("Only metadata V8-V15 is supported")
+    };
+    Ok(entries)
+}
 
 pub trait StorageEntriesList {
     /// List all of the storage entries available in some metadata.
@@ -6,8 +27,17 @@ pub trait StorageEntriesList {
 }
 
 pub struct StorageEntry<'a> {
-    pub pallet: &'a str,
-    pub entry: &'a str
+    pub pallet: Cow<'a, str>,
+    pub entry: Cow<'a, str>
+}
+
+impl <'a> StorageEntry<'a> {
+    pub fn into_owned(self) -> StorageEntry<'static> {
+        StorageEntry {
+            pallet: Cow::Owned(self.pallet.into_owned()),
+            entry: Cow::Owned(self.entry.into_owned())
+        }
+    }
 }
 
 macro_rules! impl_storage_entries_list_for_v8_to_v12 {
@@ -25,8 +55,8 @@ macro_rules! impl_storage_entries_list_for_v8_to_v12 {
                     for entry_meta in entries {
                         let entry = as_decoded(&entry_meta.name);
                         output.push(StorageEntry {
-                            pallet: pallet.as_str(),
-                            entry: entry.as_str()
+                            pallet: Cow::Borrowed(pallet.as_str()),
+                            entry: Cow::Borrowed(entry.as_str())
                         })
                     }
                 }
@@ -55,8 +85,8 @@ macro_rules! impl_storage_entries_list_for_v14_to_v15 {
                     for entry_meta in &storage.entries {
                         let entry = &entry_meta.name;
                         output.push(StorageEntry {
-                            pallet: pallet.name.as_str(),
-                            entry: entry.as_str()
+                            pallet: Cow::Borrowed(pallet.name.as_str()),
+                            entry: Cow::Borrowed(entry.as_str())
                         })
                     }
                 }

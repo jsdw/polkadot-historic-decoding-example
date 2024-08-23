@@ -78,7 +78,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                     current_types_for_spec: None
                 };
 
-                Ok(Arc::new(Mutex::new(state)))
+                Ok(Some(Arc::new(Mutex::new(state))))
             }
         },
         // Fetch a block and decode it. This runs in parallel for number of initial state items.
@@ -91,7 +91,8 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                 // Check the last block to see if a runtime update happened. Runtime updates
                 // take effect the block after they are applied.
                 let runtime_update_block = block_number.saturating_sub(1);
-                let runtime_update_block_hash = chain_get_block_hash(&state.rpcs, runtime_update_block).await?;
+                let runtime_update_block_hash = chain_get_block_hash(&state.rpcs, runtime_update_block).await?
+                    .ok_or_else(|| anyhow!("Couldn't find block {runtime_update_block}"))?;
                 let runtime_version = state.rpcs.state_get_runtime_version(Some(runtime_update_block_hash))
                     .await
                     .with_context(|| format!("Could not fetch runtime version for block {runtime_update_block} with hash {runtime_update_block_hash}"))?;
@@ -117,7 +118,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                 let current_metadata = state.current_metadata.as_ref().unwrap();
                 let current_types_for_spec = state.current_types_for_spec.as_ref().unwrap();
 
-                let block_hash = chain_get_block_hash(&state.rpcs, block_number).await?;
+                let Some(block_hash) = chain_get_block_hash(&state.rpcs, block_number).await? else { return Ok(None) };
                 let block_body = state.rpcs.chain_get_block(Some(block_hash))
                     .await
                     .with_context(|| "Could not fetch block body")?
@@ -129,12 +130,12 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                     (ext, decoded)
                 }).collect();
 
-                Ok(Output {
+                Ok(Some(Output {
                     block_number,
                     block_hash,
                     spec_version: this_spec_version,
                     extrinsics
-                })
+                }))
             }
         },
         // Log the output. This runs sequentially, in order of task numbers.
@@ -191,11 +192,10 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
     runner.run(connections, start_block_num).await
 }
 
-async fn chain_get_block_hash(rpcs: &LegacyRpcMethods<PolkadotConfig>, block_number: u64) -> anyhow::Result<<PolkadotConfig as Config>::Hash> {
+async fn chain_get_block_hash(rpcs: &LegacyRpcMethods<PolkadotConfig>, block_number: u64) -> anyhow::Result<Option<<PolkadotConfig as Config>::Hash>> {
     let block_hash = rpcs.chain_get_block_hash(Some(NumberOrHex::Number(block_number)))
         .await
-        .with_context(|| "Could not fetch block hash")?
-        .ok_or_else(|| anyhow!("Couldn't find block {block_number}"))?;
+        .with_context(|| "Could not fetch block hash")?;
     Ok(block_hash)
 }
 

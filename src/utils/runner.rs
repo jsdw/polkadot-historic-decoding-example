@@ -14,10 +14,10 @@ impl <State, InitFn, TaskFn, OutputFn, WorkloadFut, Workload, OutputFut, Output>
 where
     State: Send + Sync + 'static,
     InitFn: Send + Sync + 'static + Fn(usize, &State) -> WorkloadFut,
-    WorkloadFut: Send + Future<Output = anyhow::Result<Workload>>,
+    WorkloadFut: Send + Future<Output = anyhow::Result<Option<Workload>>>,
     Workload: Send,
     TaskFn: Send + Sync + 'static + Fn(u64, &Workload) -> OutputFut,
-    OutputFut: Send + Future<Output = anyhow::Result<Output>>,
+    OutputFut: Send + Future<Output = anyhow::Result<Option<Output>>>,
     OutputFn: Send + Sync + 'static + FnMut(Output) -> anyhow::Result<()>,
     Output: Send + 'static,
 {
@@ -55,9 +55,13 @@ where
 
                     // Initialise new workload. This is passed to each task.
                     let workload = match init_fn(task_idx, &state).await {
-                        Ok(workload) => {
+                        Ok(Some(workload)) => {
                             workload
                         },
+                        Ok(None) => {
+                            // None indicates nothing left to do in this runner.
+                            return
+                        }
                         Err(_e) => {
                             // eprintln!("Error instantiating workload for task {task_idx} (running {current_task_num}): {e}");
                             continue
@@ -68,9 +72,13 @@ where
                     let mut task_retries = 0usize;
                     'inner: loop {
                         let output = match task_fn(current_task_num, &workload).await {
-                            Ok(output) => {
+                            Ok(Some(output)) => {
                                 task_retries = 0;
                                 output
+                            },
+                            Ok(None) => {
+                                // None indicates nothing left to do in this runner.
+                                return
                             },
                             Err(_e) => {
                                 task_retries += 1;
@@ -122,6 +130,7 @@ where
 
 /// A helper which returns the next item from some list each time
 /// it's asked for one.
+#[derive(Debug,Clone)]
 pub struct RoundRobin<T> {
     items: Vec<T>,
     idx: Arc<AtomicUsize>,
