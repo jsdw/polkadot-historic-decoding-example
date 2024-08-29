@@ -3,6 +3,24 @@ pub mod runner;
 
 use scale_value::{Composite, Value, ValueDef};
 
+/// Our stdout lock is io::Write but we need fmt::Write for scale_value writing.
+/// Ideally we'd change scale_value, but io::Write is std-only among other things, 
+/// so scale-value uses fmt::Write to be no-std.
+pub struct ToFmtWrite<W>(pub W);
+impl <W: std::io::Write> std::fmt::Write for ToFmtWrite<W> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.0.write(s.as_bytes()).map(|_| ()).map_err(|_| std::fmt::Error)
+    }
+}
+impl <W: std::io::Write> std::io::Write for ToFmtWrite<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
 /// A utility function to unwrap the `DecodeDifferent` enum in earlier metadata versions.
 pub fn as_decoded<A, B>(item: &frame_metadata::decode_different::DecodeDifferent<A, B>) -> &B {
     match item {
@@ -13,16 +31,6 @@ pub fn as_decoded<A, B>(item: &frame_metadata::decode_different::DecodeDifferent
 
 /// Write out a pretty Value using `std::io::Write`.
 pub fn write_value<W: std::io::Write, T: std::fmt::Display>(w: W, value: &Value<T>) -> core::fmt::Result {
-    // Our stdout lock is io::Write but we need fmt::Write below.
-    // Ideally we'd about this, but io::Write is std-only among
-    // other things, so scale-value uses fmt::Write.
-    struct ToFmtWrite<W>(W);
-    impl <W: std::io::Write> std::fmt::Write for ToFmtWrite<W> {
-        fn write_str(&mut self, s: &str) -> std::fmt::Result {
-            self.0.write(s.as_bytes()).map(|_| ()).map_err(|_| std::fmt::Error)
-        }
-    }
-
     write_value_fmt(ToFmtWrite(w), value, "      ")
 }
 

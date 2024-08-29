@@ -26,6 +26,7 @@ pub trait StorageEntriesList {
     fn storage_entries_list(&self) -> impl Iterator<Item = StorageEntry<'_>>;
 }
 
+#[derive(Debug,Clone)]
 pub struct StorageEntry<'a> {
     pub pallet: Cow<'a, str>,
     pub entry: Cow<'a, str>

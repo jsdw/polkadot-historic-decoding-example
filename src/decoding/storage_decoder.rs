@@ -9,24 +9,9 @@ pub type StorageKeys = Vec<StorageKey>;
 
 /// The decoded representation of a storage key.
 pub struct StorageKey {
-    hash: Vec<u8>,
-    value: Option<scale_value::Value<String>>,
-    hasher: StorageHasher,
-}
-
-/// Is this storage entry iterable? If so, we'll iterate it. If not, we can just retrieve the single entry.
-pub fn is_iterable(pallet_name: &str, storage_entry: &str, metadata: &RuntimeMetadata) -> anyhow::Result<bool> {
-    match metadata {
-        RuntimeMetadata::V8(m) => is_iterable_inner(pallet_name, storage_entry, m),
-        RuntimeMetadata::V9(m) => is_iterable_inner(pallet_name, storage_entry, m),
-        RuntimeMetadata::V10(m) => is_iterable_inner(pallet_name, storage_entry, m),
-        RuntimeMetadata::V11(m) => is_iterable_inner(pallet_name, storage_entry, m),
-        RuntimeMetadata::V12(m) => is_iterable_inner(pallet_name, storage_entry, m),
-        RuntimeMetadata::V13(m) => is_iterable_inner(pallet_name, storage_entry, m),
-        RuntimeMetadata::V14(m) => is_iterable_inner(pallet_name, storage_entry, m),
-        RuntimeMetadata::V15(m) => is_iterable_inner(pallet_name, storage_entry, m),
-        _ => bail!("Only metadata V8 - V15 is supported")
-    }
+    pub hash: Vec<u8>,
+    pub value: Option<scale_value::Value<String>>,
+    pub hasher: StorageHasher,
 }
 
 /// Decode the bytes representing some storage key. Here, we expect all of the key bytes including the hashed pallet name and storage entry.
@@ -59,16 +44,6 @@ pub fn decode_storage_value(pallet_name: &str, storage_entry: &str, bytes: &[u8]
     }
 }
 
-fn is_iterable_inner<Info>(pallet_name: &str, storage_entry: &str, info: &Info) -> anyhow::Result<bool> 
-where
-    Info: StorageTypeInfo
-{
-    let storage_info = info.get_storage_info(pallet_name, storage_entry)
-        .with_context(|| "Cannot find storage entry")?;
-
-    Ok(!storage_info.keys.is_empty())
-}
-
 fn decode_storage_keys_inner<Info, Resolver>(pallet_name: &str, storage_entry: &str, bytes: &[u8], info: &Info, type_resolver: &Resolver) -> anyhow::Result<StorageKeys>
 where
     Info: StorageTypeInfo,
@@ -98,20 +73,20 @@ where
             },
             StorageHasher::Blake2_128Concat => {
                 let hash = strip_bytes(cursor, 16)?;
-                let value = scale_value::scale::decode_as_type(cursor, key.key_id, type_resolver)
+                let value = decode_or_trace(cursor, key.key_id, type_resolver)
                     .with_context(|| "Cannot decode Blake2_128Concat storage key")?
                     .map_context(|type_id| type_id.to_string());
                 Ok(StorageKey { hash, hasher, value: Some(value) })
             },
             StorageHasher::Twox64Concat => {
                 let hash = strip_bytes(cursor, 8)?;
-                let value = scale_value::scale::decode_as_type(cursor, key.key_id, type_resolver)
+                let value = decode_or_trace(cursor, key.key_id, type_resolver)
                     .with_context(|| "Cannot decode Twox64Concat storage key")?
                     .map_context(|type_id| type_id.to_string());
                 Ok(StorageKey { hash, hasher, value: Some(value) })
             },
             StorageHasher::Identity => {
-                let value = scale_value::scale::decode_as_type(cursor, key.key_id, type_resolver)
+                let value = decode_or_trace(cursor, key.key_id, type_resolver)
                     .with_context(|| "Cannot decode Identity storage key")?
                     .map_context(|type_id| type_id.to_string());
                 Ok(StorageKey { hash: Vec::new(), hasher, value: Some(value) })
@@ -135,7 +110,7 @@ where
 
     let cursor = &mut &*bytes;
 
-    let decoded = scale_value::scale::decode_as_type(cursor, value_id, type_resolver)
+    let decoded = decode_or_trace(cursor, value_id, type_resolver)
         .with_context(|| "Cannot decode storage value")?
         .map_context(|type_id| type_id.to_string());
 
@@ -150,4 +125,19 @@ fn strip_bytes(cursor: &mut &[u8], num: usize) -> anyhow::Result<Vec<u8>> {
 
     *cursor = &cursor[num..];
     Ok(bytes)
+}
+
+fn decode_or_trace<Resolver, Id>(cursor: &mut &[u8], type_id: Id, types: &Resolver) -> anyhow::Result<scale_value::Value<String>> 
+where
+    Resolver: TypeResolver<TypeId = Id>,
+    Id: core::fmt::Debug + core::fmt::Display + Clone + Send + Sync + 'static
+{
+    match scale_value::scale::decode_as_type(cursor, type_id.clone(), types) {
+        Ok(value) => Ok(value.map_context(|id| id.to_string())),
+        Err(_e) => {
+            scale_value::scale::tracing::decode_as_type(cursor, type_id.clone(), types)
+                .map(|v| v.map_context(|id| id.to_string()))
+                .with_context(|| format!("Failed to decode type with id {type_id}"))
+        }
+    }
 }

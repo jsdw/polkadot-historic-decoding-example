@@ -1,15 +1,21 @@
 use std::path::PathBuf;
 use clap::Parser;
-use crate::{decoding::storage_entries_list::StorageEntry, utils::{self, runner::{RoundRobin, Runner}}};
+use frame_metadata::RuntimeMetadata;
+use crate::{decoding::storage_decoder::StorageKey, utils::{self, runner::{RoundRobin, Runner}}};
+use crate::decoding::{ storage_decoder, storage_entries_list::StorageEntry };
+use crate::decoding::storage_type_info::StorageHasher;
 use super::find_spec_changes::SpecVersionUpdate;
 use super::fetch_metadata::state_get_metadata;
-use anyhow::Context;
-use std::sync::{Arc, Mutex};
+use anyhow::{anyhow, bail, Context};
+use std::sync::Arc;
 use std::collections::VecDeque;
-use scale_info_legacy::{ChainTypeRegistry, TypeRegistrySet};
+use scale_info_legacy::ChainTypeRegistry;
 use subxt::{backend::{
-    legacy::{ rpc_methods::{Bytes, NumberOrHex}, LegacyRpcMethods }, rpc::RpcClient
-}, ext::subxt_core::metadata, utils::H256, PolkadotConfig};
+    legacy::{ LegacyBackend, LegacyRpcMethods }, rpc::RpcClient, Backend
+}, utils::H256, PolkadotConfig};
+use std::io::Write as _;
+use scale_value::stringify::to_writer_custom;
+use crate::utils::ToFmtWrite;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -30,31 +36,28 @@ pub struct Opts {
     /// How many storage decode tasks/connections to run in parallel.
     #[arg(long)]
     connections: Option<usize>,
+
+    /// Only log errors; don't log extrinsics that decode successfully.
+    #[arg(short, long)]
+    errors_only: bool,
+
+    /// Keep outputting blocks once we hit an error.
+    #[arg(long)]
+    continue_on_error: bool,
 }
 
 pub async fn run(opts: Opts) -> anyhow::Result<()> {
-
-    /* 
-    Use runner to run a bunch of tasks which are each going to select a spec version and then
-    randomly pick a block within that spec version. Each task will:
-    
-    1. Fetch metadata at that block (we can cache this per spec version if we like).
-    2. Use StorageEntriesList to fetch list of all available storage entries.
-    3. For each storage entry, use StorageTypeInfo to get info for this entry.
-    4. Construct the storage prefix (twox64(pallet) + twox64(entry_name) iirc)
-    5. If plain entry, fetch value as is and use storage_decoder to decode it.
-       If map, iterate from prefix and decode both keys and values via storage_decoder.
-    6. Report any decode errors back, else print the output?
-    */
     let connections = opts.connections.unwrap_or(1);
     let urls = Arc::new(RoundRobin::new(utils::url_or_polkadot_rpc_nodes(opts.url.as_deref())));
+    let errors_only = opts.errors_only;
+    let continue_on_error = opts.continue_on_error;
 
-    let historic_types: ChainTypeRegistry = {
+    let historic_types: Arc<ChainTypeRegistry> = Arc::new({
         let historic_types_str = std::fs::read_to_string(&opts.types)
             .with_context(|| "Could not load historic types")?;
         serde_yaml::from_str(&historic_types_str)
             .with_context(|| "Can't parse historic types from JSON")?
-    };
+    });
     let spec_versions = opts.spec_versions.as_ref().map(|path| {
         let spec_versions_str = std::fs::read_to_string(path)
             .with_context(|| "Could not load spec versions")?;
@@ -99,9 +102,16 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                 }
             };
             let metadata = match state_get_metadata(&rpc_client, Some(block_hash)).await {
-                Ok(metadata) => metadata,
+                Ok(metadata) => Arc::new(metadata),
                 Err(e) => {
                     eprintln!("Couldn't get metadata at {block_number}; will try again: {e}");
+                    continue
+                }
+            };
+            let runtime_version = match rpcs.state_get_runtime_version(Some(block_hash)).await {
+                Ok(runtime_version) => runtime_version,
+                Err(e) => {
+                    eprintln!("Couldn't get runtime version at {block_number}; will try again: {e}");
                     continue
                 }
             };
@@ -113,96 +123,202 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                     break
                 }
             };
+            
+            // Print header for block.
+            {
+                let mut stdout = std::io::stdout().lock();
+                writeln!(stdout, "==============================================")?;
+                writeln!(stdout, "Storage for block {block_number} ({})", subxt::utils::to_hex(block_hash))?;
+                writeln!(stdout, "Spec version {}", runtime_version.spec_version)?;
+            }
 
             // try to decode storage entries in parallel.
             let runner = Runner::new(
-                (block_hash, storage_entries, urls.clone()),
+                (
+                    block_hash, 
+                    storage_entries, 
+                    urls.clone(), 
+                    historic_types.clone(), 
+                    metadata, 
+                    runtime_version.spec_version
+                ),
                 // Connect to an RPC client to start decoding storage entries
-                |task_idx, (block_hash, storage_entries, urls)| {
+                |_task_idx, (block_hash, storage_entries, urls, historic_types, metadata, spec_version)| {
                     let url = urls.get().clone();
+                    let storage_entries = storage_entries.clone();
+                    let block_hash = *block_hash;
+                    let historic_types = historic_types.clone();
+                    let metadata = metadata.clone();
+                    let spec_version = *spec_version;
+
                     async move {
                         let rpc_client = RpcClient::from_insecure_url(url).await?;
-                        let rpcs = LegacyRpcMethods::<PolkadotConfig>::new(rpc_client.clone());
-                        Ok(Some(()))
+                        let backend = LegacyBackend::builder()
+                            .storage_page_size(64)
+                            .build(rpc_client);
+
+                        Ok(Some(Arc::new(RunnerState {
+                            backend,
+                            block_hash,
+                            storage_entries,
+                            historic_types,
+                            metadata,
+                            spec_version
+                        })))
                     }
                 },
                 // Based on task number, decode an entry from the list, returning None when number exceeds list length.
                 |task_num, state| {
+                    let state = state.clone();
+
                     async move {
-                        Ok(Some(()))
+                        let Some(storage_entry) = state.storage_entries.get(task_num as usize) else { return Ok(None) };
+                        let metadata = &state.metadata;
+                        let historic_types = &state.historic_types.for_spec_version(state.spec_version as u64);
+                        let pallet = &storage_entry.pallet;
+                        let entry = &storage_entry.entry;
+                        let at = state.block_hash;
+                        let key = {
+                            let mut hash = Vec::with_capacity(32);
+                            hash.extend(&sp_crypto_hashing::twox_128(pallet.as_bytes()));
+                            hash.extend(&sp_crypto_hashing::twox_128(entry.as_bytes()));
+                            hash
+                        };
+
+                        // Iterate or fetch single value depending on entry.
+                        let is_iterable = crate::decoding::storage_type_info::is_iterable(pallet, entry, &state.metadata)?;
+                        let mut values = if is_iterable {
+                            state.backend
+                                .storage_fetch_descendant_values(key, at)
+                                .await
+                                .with_context(|| format!("Failed to get a stream of storage items for {pallet}.{entry}"))
+                        } else {
+                            state.backend.storage_fetch_values(vec![key], at)
+                                .await
+                                .with_context(|| format!("Failed to fetch value at {pallet}.{entry}"))
+                        }?;
+    
+                        let mut keyvals = vec![];
+
+                        // Decode each value we get back.
+                        while let Some(value) = values.next().await {
+                            let value = value
+                                .with_context(|| format!("Failed to get storage item in stream for {pallet}.{entry}"))?;
+
+                            let key = storage_decoder::decode_storage_keys(pallet, entry, &value.key, metadata, historic_types)
+                                .with_context(|| format!("Failed to decode storage key in {pallet}.{entry}"));
+                            let value = storage_decoder::decode_storage_value(pallet, entry, &value.value, metadata, historic_types)
+                                .with_context(|| format!("Failed to decode storage value in {pallet}.{entry}"));
+
+                            keyvals.push(DecodedStorageKeyVal {
+                                key,
+                                value
+                            })
+                        }
+
+                        Ok(Some(DecodedStorageEntry {
+                            pallet: pallet.to_string(),
+                            entry: entry.to_string(),
+                            keyvals
+                        }))
                     }
                 },
                 // Output details.
-                |output| {
-                    Ok(())
+                move |output| {
+                    let mut stdout = std::io::stdout().lock();
+
+                    let is_error = output.keyvals.iter().any(|kv| kv.key.is_err() || kv.value.is_err());
+                    let should_print_header = !errors_only || (errors_only && is_error);
+                    let should_print_success = !errors_only;
+
+                    if should_print_header {
+                        writeln!(stdout, "{}.{}", output.pallet, output.entry)?;
+                    }
+                    for DecodedStorageKeyVal { key, value } in output.keyvals {
+                        match (key, value) {
+                            // Everything successful:
+                            (Ok(key), Ok(value)) => {
+                                if should_print_success {
+                                    write!(stdout, "  ")?;
+                                    print_storage_keys(&mut stdout, &key)?;
+                                    write!(stdout, ":\n    ")?;
+                                    to_writer_custom().compact().write(&value, ToFmtWrite(&mut stdout))?;
+                                }
+                            },
+                            // Something went wrong with key or value or both:
+                            (Ok(key), Err(value_err)) => {
+                                write!(stdout, "  ")?;
+                                print_storage_keys(&mut stdout, &key)?;
+                                write!(stdout, ":\n    Error: {value_err}")?;
+                            },
+                            (Err(key_err), Ok(value)) => {
+                                writeln!(stdout, "  Error: {key_err}\n    ")?;
+                                to_writer_custom().compact().write(&value, ToFmtWrite(&mut stdout))?;
+                            },
+                            (Err(key_err), Err(value_err)) => {
+                                writeln!(stdout, "  Error: {key_err}\n    Error: {value_err}")?;
+                            }
+                        }
+                    }
+
+                    if !continue_on_error && is_error {
+                        Err(anyhow!("Stopping: error decoding storage entries."))
+                    } else {
+                        Ok(())
+                    }
                 }
             );
 
-            runner.run(10, 0).await;
+            // Decode storage entries in the block.
+            let _ = runner.run(connections, 0).await;
+            // Don't retry this block; move on to next.
+            break;
+        }
+    }
+}
+
+fn print_storage_keys<W: std::io::Write>(writer: W, keys: &[StorageKey]) -> anyhow::Result<()> {
+    let mut writer = ToFmtWrite(writer);
+
+    // blake2: AccountId(0x2331) + ident: Foo(123) + blake2:0x23edbfe
+    for (idx, key) in keys.into_iter().enumerate() {
+        if idx != 0 {
+            write!(&mut writer, " + ")?;
         }
 
-        // let runner = Runner::new(
-        //     (
-        //         urls.clone(),
-        //         spec_versions.clone(),
-        //         latest_block_number,
-        //     ),
-        //     // Get the details needed to decode storage entries in some block.
-        //     |_task_idx, (urls, specs, latest_block_number)| {
-        //         let url = urls.get().to_owned();
-        //         let spec_versions = specs.clone();
-        //         let latest_block_number = *latest_block_number;
-        //         async move {
-        //             let spec_versions = spec_versions.as_ref().map(|s| s.as_slice());
-        //             let rpc_client = RpcClient::from_insecure_url(url).await?;
-        //             let rpcs = LegacyRpcMethods::<PolkadotConfig>::new(rpc_client.clone());
-        //             let block_number = pick_random_block(spec_versions, latest_block_number);
-        //             let Some(block_hash) = rpcs.chain_get_block_hash(Some(block_number.into()))
-        //                 .await
-        //                 .with_context(|| format!("Couldn't get block hash for {block_number}"))? else { return Ok(None) };
-        //             let metadata = state_get_metadata(&rpc_client, Some(block_hash))
-        //                 .await
-        //                 .with_context(|| "Couldn't fetch metadata")?;
-        //             let storage_entries = crate::decoding::storage_entries_list::get_storage_entries(&metadata)
-        //                 .with_context(|| "Couldn't fetch list of storage entries from metadata")?;
-
-        //             Ok(Some(Arc::new(RunnerState {
-        //                 rpcs,
-        //                 block_number,
-        //                 storage_entries: Mutex::new(storage_entries)
-        //             })))
-        //         }
-        //     },
-        //     // Work through the storage entries, decoding them.
-        //     |_task_num, state| {
-        //         let state = state.clone();
-        //         async move {
-        //             /*
-        //             TODO:
-
-        //             - Fetch metadata for this block.
-        //             - Get first entry in `storage_entries`.
-        //             - Use `decode_storage_item::is_iterable` to see whether to fetch single entry or iterate it.
-        //             - fetch or iterate.
-        //             - Pop entry out of storage entries when all done; this means 
-
-        //             */
-
-        //             // Fetch metadata for this spec version
-
-
-        //             // Pick random block in this spec version
-        //             // Iterate storage entries for this block and try to decode them.
-    
-        //             Ok(Some(()))
-        //         }
-        //     },
-        //     |output| {
-        //         Ok(())
-        //     }
-        // );
-    
-        // runner.run(10, 0).await;
+        match (key.hasher, &key.value) {
+            (StorageHasher::Blake2_128, None) => {
+                write!(&mut writer, "blake2_128: ")?;
+                write!(&mut writer, "{}", hex::encode(&key.hash))?;
+            },
+            (StorageHasher::Blake2_256, None) => {
+                write!(&mut writer, "blake2_256: ")?;
+                write!(&mut writer, "{}", hex::encode(&key.hash))?;
+            },
+            (StorageHasher::Blake2_128Concat, Some(value)) => {
+                write!(&mut writer, "blake2_128_concat: ")?;
+                to_writer_custom().compact().write(&value, &mut writer)?;
+            },
+            (StorageHasher::Twox128, None) => {
+                write!(&mut writer, "twox_128: ")?;
+                write!(&mut writer, "{}", hex::encode(&key.hash))?;
+            },
+            (StorageHasher::Twox256, None) => {
+                write!(&mut writer, "twox_256: ")?;
+                write!(&mut writer, "{}", hex::encode(&key.hash))?;
+            },
+            (StorageHasher::Twox64Concat, Some(value)) => {
+                write!(&mut writer, "twox64_concat: ")?;
+                to_writer_custom().compact().write(&value, &mut writer)?;
+            },
+            (StorageHasher::Identity, Some(value)) => {
+                write!(&mut writer, "ident: ")?;
+                to_writer_custom().compact().write(&value, &mut writer)?;
+            },
+            _ => {
+                bail!("Invalid storage hasher/value pair")
+            }
+        }
     }
 
     Ok(())
@@ -233,7 +349,21 @@ fn pick_random_block(spec_versions: Option<&[SpecVersionUpdate]>, latest_block: 
 }
 
 struct RunnerState {
-    rpcs: LegacyRpcMethods<PolkadotConfig>,
-    block_number: u32,
-    storage_entries: Mutex<VecDeque<StorageEntry<'static>>>
+    backend: LegacyBackend<PolkadotConfig>,
+    block_hash: H256,
+    storage_entries: VecDeque<StorageEntry<'static>>,
+    historic_types: Arc<ChainTypeRegistry>,
+    metadata: Arc<RuntimeMetadata>,
+    spec_version: u32,
+}
+
+struct DecodedStorageEntry {
+    pallet: String,
+    entry: String,
+    keyvals: Vec<DecodedStorageKeyVal>
+}
+
+struct DecodedStorageKeyVal {
+    key: anyhow::Result<Vec<StorageKey>>,
+    value: anyhow::Result<scale_value::Value<String>>
 }
