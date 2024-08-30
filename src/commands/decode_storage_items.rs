@@ -248,13 +248,13 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                                 write!(IndentedWriter::<2, _>(&mut stdout), "Key Error: {e:?}")?;
                             }
                         }
-                        write!(stdout, "\n    ")?;
+                        write!(stdout, "\n    - ")?;
                         match value {
                             Ok(value) => {
-                                write_compact_value(IndentedWriter::<4, _>(&mut stdout), &value)?;
+                                write_compact_value(IndentedWriter::<6, _>(&mut stdout), &value)?;
                             },
                             Err(e) => {
-                                write!(IndentedWriter::<4, _>(&mut stdout), "Value Error: {e:?}")?;
+                                write!(IndentedWriter::<6, _>(&mut stdout), "Value Error: {e:?}")?;
 
                             }
                         }
