@@ -54,6 +54,29 @@ pub fn write_value_fmt<W: std::fmt::Write, T: std::fmt::Display>(w: W, value: &V
         .write(&value, w)
 }
 
+pub fn write_compact_value<W: std::io::Write>(writer: W, value: &Value<String>) -> anyhow::Result<()> {
+    write_compact_value_fmt(ToFmtWrite(writer), value)
+}
+
+pub fn write_compact_value_fmt<W: std::fmt::Write>(writer: W, value: &Value<String>) -> anyhow::Result<()> {
+    scale_value::stringify::to_writer_custom()
+        .compact()
+        .format_context(|type_id, w: &mut W| write!(w, "{type_id}"))
+        .add_custom_formatter(|v, w: &mut W| scale_value::stringify::custom_formatters::format_hex(v,w))
+        .add_custom_formatter(|v, w: &mut W| {
+            // don't space unnamed composites over multiple lines if lots of primitive values.
+            if let ValueDef::Composite(Composite::Unnamed(vals)) = &v.value {
+                let are_primitive = vals.iter().all(|val| matches!(val.value, ValueDef::Primitive(_)));
+                if are_primitive {
+                    return Some(write!(w, "{v}"))
+                }
+            }
+            None
+        })
+        .write(value, writer)?;
+    Ok(())
+}
+
 /// Unwrap the given URl string, returning default Polkadot RPC nodes if not given.
 pub fn url_or_polkadot_rpc_nodes(url: Option<&str>) -> Vec<String> {
     // Use our default or built-inPolkadot RPC URLs if not provided.
@@ -85,3 +108,24 @@ const RPC_NODE_URLS: [&str; 7] = [
     "wss://rpc.dotters.network/polkadot",
     // "wss://dot-rpc.stakeworld.io", // seemed unreliable.
 ];
+
+/// Wrap a writer to indent any newlines by some amount.
+pub struct IndentedWriter<const U: usize, W>(pub W);
+
+impl <const U: usize, W: std::io::Write> std::io::Write for IndentedWriter<U, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // This is dumb and doesn't handle failure to write out buffer.
+        for &byte in buf {
+            self.0.write(&[byte])?;
+            if byte == b'\n' {
+                for _ in 0..U {
+                    self.0.write(&[b' '])?;
+                }
+            }
+        }
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::atomic::{AtomicBool, Ordering}};
 use clap::Parser;
 use frame_metadata::RuntimeMetadata;
 use crate::{decoding::storage_decoder::StorageKey, utils::{self, runner::{RoundRobin, Runner}}};
@@ -14,8 +14,7 @@ use subxt::{backend::{
     legacy::{ LegacyBackend, LegacyRpcMethods }, rpc::RpcClient, Backend
 }, utils::H256, PolkadotConfig};
 use std::io::Write as _;
-use scale_value::stringify::to_writer_custom;
-use crate::utils::ToFmtWrite;
+use crate::utils::{ToFmtWrite, IndentedWriter, write_compact_value};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -44,10 +43,16 @@ pub struct Opts {
     /// Keep outputting blocks once we hit an error.
     #[arg(long)]
     continue_on_error: bool,
+
+    /// The seed to start from. Blocks are picked in a deterministic way,
+    /// and so we can provide this to continue from where we left off.
+    #[arg(short,long)]
+    starting_number: Option<usize>
 }
 
 pub async fn run(opts: Opts) -> anyhow::Result<()> {
     let connections = opts.connections.unwrap_or(1);
+    let starting_number = opts.starting_number.unwrap_or(0);
     let urls = Arc::new(RoundRobin::new(utils::url_or_polkadot_rpc_nodes(opts.url.as_deref())));
     let errors_only = opts.errors_only;
     let continue_on_error = opts.continue_on_error;
@@ -65,20 +70,11 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
             .with_context(|| "Could not parse spec version JSON")
     }).transpose()?;
 
-    let latest_block_number = {
-        let url = urls.get();
-        let rpc_client = RpcClient::from_insecure_url(url).await?;
-        LegacyRpcMethods::<PolkadotConfig>::new(rpc_client)
-            .chain_get_header(None)
-            .await?
-            .expect("latest block will be returned when no hash given")
-            .number
-    };  
-
-    loop {
-        // In the outer loop we select a random block.
+    let mut number = starting_number;
+    'outer: loop {
+        // In the outer loop we select a block.
         let spec_versions = spec_versions.as_ref().map(|s| s.as_slice());
-        let block_number = pick_random_block(spec_versions, latest_block_number);
+        let block_number = pick_pseudorandom_block(spec_versions, number);
 
         loop {
             // In the inner loop we connect to a client and try to download entries.
@@ -128,9 +124,13 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
             {
                 let mut stdout = std::io::stdout().lock();
                 writeln!(stdout, "==============================================")?;
+                writeln!(stdout, "Number {number}")?;
                 writeln!(stdout, "Storage for block {block_number} ({})", subxt::utils::to_hex(block_hash))?;
                 writeln!(stdout, "Spec version {}", runtime_version.spec_version)?;
             }
+
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop2 = stop.clone();
 
             // try to decode storage entries in parallel.
             let runner = Runner::new(
@@ -235,33 +235,34 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                         writeln!(stdout, "{}.{}", output.pallet, output.entry)?;
                     }
                     for DecodedStorageKeyVal { key, value } in output.keyvals {
-                        match (key, value) {
-                            // Everything successful:
-                            (Ok(key), Ok(value)) => {
-                                if should_print_success {
-                                    write!(stdout, "  ")?;
-                                    print_storage_keys(&mut stdout, &key)?;
-                                    write!(stdout, ":\n    ")?;
-                                    to_writer_custom().compact().write(&value, ToFmtWrite(&mut stdout))?;
-                                }
+                        if key.is_ok() && value.is_ok() && !should_print_success {
+                            continue
+                        }
+
+                        write!(stdout, "  ")?;
+                        match key {
+                            Ok(key) => {
+                                write_storage_keys(IndentedWriter::<2, _>(&mut stdout), &key)?;
                             },
-                            // Something went wrong with key or value or both:
-                            (Ok(key), Err(value_err)) => {
-                                write!(stdout, "  ")?;
-                                print_storage_keys(&mut stdout, &key)?;
-                                write!(stdout, ":\n    Error: {value_err}")?;
-                            },
-                            (Err(key_err), Ok(value)) => {
-                                writeln!(stdout, "  Error: {key_err}\n    ")?;
-                                to_writer_custom().compact().write(&value, ToFmtWrite(&mut stdout))?;
-                            },
-                            (Err(key_err), Err(value_err)) => {
-                                writeln!(stdout, "  Error: {key_err}\n    Error: {value_err}")?;
+                            Err(e) => {
+                                write!(IndentedWriter::<2, _>(&mut stdout), "Key Error: {e:?}")?;
                             }
                         }
+                        write!(stdout, "\n    ")?;
+                        match value {
+                            Ok(value) => {
+                                write_compact_value(IndentedWriter::<4, _>(&mut stdout), &value)?;
+                            },
+                            Err(e) => {
+                                write!(IndentedWriter::<4, _>(&mut stdout), "Value Error: {e:?}")?;
+
+                            }
+                        }
+                        writeln!(stdout)?;
                     }
 
                     if !continue_on_error && is_error {
+                        stop2.store(true, Ordering::Relaxed);
                         Err(anyhow!("Stopping: error decoding storage entries."))
                     } else {
                         Ok(())
@@ -271,14 +272,28 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
 
             // Decode storage entries in the block.
             let _ = runner.run(connections, 0).await;
+            // Stop if the runner tells us to. Quite a hacky way to communicate it.
+            if stop.load(Ordering::Relaxed) == true {
+                break 'outer;
+            }
             // Don't retry this block; move on to next.
             break;
         }
+
+        number += 1;
     }
+
+    Ok(())
 }
 
-fn print_storage_keys<W: std::io::Write>(writer: W, keys: &[StorageKey]) -> anyhow::Result<()> {
+fn write_storage_keys<W: std::io::Write>(writer: W, keys: &[StorageKey]) -> anyhow::Result<()> {
     let mut writer = ToFmtWrite(writer);
+
+    // Plain entries have no keys:
+    if keys.is_empty() {
+        write!(&mut writer, "plain")?;
+        return Ok(())
+    }
 
     // blake2: AccountId(0x2331) + ident: Foo(123) + blake2:0x23edbfe
     for (idx, key) in keys.into_iter().enumerate() {
@@ -297,7 +312,7 @@ fn print_storage_keys<W: std::io::Write>(writer: W, keys: &[StorageKey]) -> anyh
             },
             (StorageHasher::Blake2_128Concat, Some(value)) => {
                 write!(&mut writer, "blake2_128_concat: ")?;
-                to_writer_custom().compact().write(&value, &mut writer)?;
+                write_compact_value(&mut writer, &value)?;
             },
             (StorageHasher::Twox128, None) => {
                 write!(&mut writer, "twox_128: ")?;
@@ -309,11 +324,11 @@ fn print_storage_keys<W: std::io::Write>(writer: W, keys: &[StorageKey]) -> anyh
             },
             (StorageHasher::Twox64Concat, Some(value)) => {
                 write!(&mut writer, "twox64_concat: ")?;
-                to_writer_custom().compact().write(&value, &mut writer)?;
+                write_compact_value(&mut writer, &value)?;
             },
             (StorageHasher::Identity, Some(value)) => {
                 write!(&mut writer, "ident: ")?;
-                to_writer_custom().compact().write(&value, &mut writer)?;
+                write_compact_value(&mut writer, &value)?;
             },
             _ => {
                 bail!("Invalid storage hasher/value pair")
@@ -324,28 +339,24 @@ fn print_storage_keys<W: std::io::Write>(writer: W, keys: &[StorageKey]) -> anyh
     Ok(())
 }
 
-fn pick_random_block(spec_versions: Option<&[SpecVersionUpdate]>, latest_block: u32) -> u32 {
-    match spec_versions {
-        None => {
-            // Just pick a random block from the whole range.
-            rand::random::<u32>() % latest_block
-        },
-        Some(spec_versions) => {
-            // Randomly select a range, remembering that we don't have a "first" or "last" spec version.
-            let spec_version_idx = rand::random::<usize>() % (spec_versions.len() + 1);
-            let (start_block, end_block) = if spec_version_idx == 0 {
-                (0, spec_versions[0].block)
-            } else if spec_version_idx == spec_versions.len() {
-                (spec_versions.last().unwrap().block + 1, latest_block)
-            } else {
-                (spec_versions[spec_version_idx - 1].block + 1, spec_versions[spec_version_idx].block)
-            };
+/// Given the same spec versions and the same number, this should output the same value,
+/// but the output block number can be pseudorandom in nature. The output number should be
+/// between the first and last spec versions provided (so blocks newer than the last runtime
+/// upgrade aren't tested).
+fn pick_pseudorandom_block(spec_versions: Option<&[SpecVersionUpdate]>, number: usize) -> u32 {
+    let Some(spec_versions) = spec_versions else {
+        return number as u32;
+    };
 
-            // Randomly select a block in this range.
-            let range = end_block - start_block + 1;
-            (rand::random::<u32>() % range) + start_block
-        }
-    }
+    // Given spec versions, we deterministically work from first blocks seen (ie blocks before
+    // update is enacted, which is a good edge to test) and then blocks after and so on. 
+    // 0 0 0 1 1 1 2 2 2 3 3
+    // 0 4   1 5   2 6   3 7
+    let spec_version_idx = number % spec_versions.len();
+    let spec_version_block_idx = number / spec_versions.len();
+
+    let block_number = spec_versions[spec_version_idx].block + spec_version_block_idx as u32;
+    block_number
 }
 
 struct RunnerState {
