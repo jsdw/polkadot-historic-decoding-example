@@ -6,6 +6,7 @@ global:
       slotNumber: u64
       firstHeader: Header
       secondHeader: Header
+    BabeAuthorityWeight: u64
 
     # System
     Perbill: u32
@@ -16,6 +17,21 @@ global:
     Key: Bytes
     StorageKey: Bytes # Unsure about this: storage keys can vary in shape based on hashers etc.
     StorageData: Bytes
+    RefCount: u8
+    AccountInfo<Index, AccountData>:
+      nonce: Index
+      refcount: RefCount
+      data: AccountData
+    T::Index: Index
+    T::AccountData:
+      free: Balance
+      reserved: Balance
+      miscFrozen: Balance
+      feeFrozen: Balance
+    LastRuntimeUpgradeInfo:
+      specVersion: Compact<u32>
+      specName: Text
+    Text: String
 
     # Scheduler
     T::BlockNumber: u32
@@ -34,6 +50,8 @@ global:
     # Balances
     <T::Lookup as StaticLookup>::Source: AccountId
     T::Balance: Balance
+    Releases: 
+      _enum: ['V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10']
 
     # Authorship
     T::Header:

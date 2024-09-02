@@ -1,12 +1,11 @@
 use std::{path::PathBuf, sync::atomic::{AtomicBool, Ordering}};
 use clap::Parser;
 use frame_metadata::RuntimeMetadata;
-use crate::{decoding::storage_decoder::StorageKey, utils::{self, runner::{RoundRobin, Runner}}};
+use crate::{decoding::storage_decoder::{StorageKey,write_storage_keys}, utils::{self, runner::{RoundRobin, Runner}}};
 use crate::decoding::{ storage_decoder, storage_entries_list::StorageEntry };
-use crate::decoding::storage_type_info::StorageHasher;
 use super::find_spec_changes::SpecVersionUpdate;
 use super::fetch_metadata::state_get_metadata;
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, Context};
 use std::sync::Arc;
 use std::collections::VecDeque;
 use scale_info_legacy::ChainTypeRegistry;
@@ -14,7 +13,7 @@ use subxt::{backend::{
     legacy::{ LegacyBackend, LegacyRpcMethods }, rpc::RpcClient, Backend
 }, utils::H256, PolkadotConfig};
 use std::io::Write as _;
-use crate::utils::{ToFmtWrite, IndentedWriter, write_compact_value};
+use crate::utils::{IndentedWriter, write_compact_value};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -46,13 +45,19 @@ pub struct Opts {
 
     /// The seed to start from. Blocks are picked in a deterministic way,
     /// and so we can provide this to continue from where we left off.
-    #[arg(short,long)]
-    starting_number: Option<usize>
+    #[arg(long)]
+    starting_number: Option<usize>,
+
+    /// The starting entry eg Staking.ActiveEra. We'll begin from this on
+    /// our initial block.
+    #[arg(long)]
+    starting_entry: Option<StartingEntry>
 }
 
 pub async fn run(opts: Opts) -> anyhow::Result<()> {
     let connections = opts.connections.unwrap_or(1);
     let starting_number = opts.starting_number.unwrap_or(0);
+    let mut starting_entry = opts.starting_entry;
     let urls = Arc::new(RoundRobin::new(utils::url_or_polkadot_rpc_nodes(opts.url.as_deref())));
     let errors_only = opts.errors_only;
     let continue_on_error = opts.continue_on_error;
@@ -75,6 +80,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
         // In the outer loop we select a block.
         let spec_versions = spec_versions.as_ref().map(|s| s.as_slice());
         let block_number = pick_pseudorandom_block(spec_versions, number);
+        let runtime_update_block_number = block_number.saturating_sub(1);
 
         loop {
             // In the inner loop we connect to a client and try to download entries.
@@ -89,6 +95,14 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
             };
             let rpcs = LegacyRpcMethods::<PolkadotConfig>::new(rpc_client.clone());
 
+            let runtime_update_block_hash = match rpcs.chain_get_block_hash(Some(runtime_update_block_number.into())).await {
+                Ok(Some(hash)) => hash,
+                Ok(None) => break,
+                Err(e) => {
+                    eprintln!("Couldn't get block hash for {block_number}; will try again: {e}");
+                    continue
+                }
+            };
             let block_hash = match rpcs.chain_get_block_hash(Some(block_number.into())).await {
                 Ok(Some(hash)) => hash,
                 Ok(None) => break,
@@ -97,14 +111,14 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                     continue
                 }
             };
-            let metadata = match state_get_metadata(&rpc_client, Some(block_hash)).await {
+            let metadata = match state_get_metadata(&rpc_client, Some(runtime_update_block_hash)).await {
                 Ok(metadata) => Arc::new(metadata),
                 Err(e) => {
                     eprintln!("Couldn't get metadata at {block_number}; will try again: {e}");
                     continue
                 }
             };
-            let runtime_version = match rpcs.state_get_runtime_version(Some(block_hash)).await {
+            let runtime_version = match rpcs.state_get_runtime_version(Some(runtime_update_block_hash)).await {
                 Ok(runtime_version) => runtime_version,
                 Err(e) => {
                     eprintln!("Couldn't get runtime version at {block_number}; will try again: {e}");
@@ -112,10 +126,26 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                 }
             };
             let storage_entries = match crate::decoding::storage_entries_list::get_storage_entries(&metadata) {
-                Ok(entries) => entries,
+                Ok(entries) => {
+                    match starting_entry {
+                        None => entries,
+                        Some(se) => {
+                            let se_pallet = se.pallet.to_ascii_lowercase();
+                            let se_entry = se.entry.to_ascii_lowercase();
+                            starting_entry = None;
+
+                            entries
+                                .into_iter()
+                                .skip_while(|e| {
+                                    e.pallet.to_ascii_lowercase() != se_pallet || e.entry.to_ascii_lowercase() != se_entry
+                                })
+                                .collect()
+                        }
+                    }
+                },
                 Err(e) => {
                     // The only error here is that the metadata can't be decoded, so break to give up on this block entirely.
-                    eprintln!("Couldn't get storage entries at {block_number}: {e}");
+                    eprintln!("Couldn't get storage entries for {block_number}: {e}");
                     break
                 }
             };
@@ -225,6 +255,10 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                 },
                 // Output details.
                 move |output| {
+                    if output.keyvals.is_empty() {
+                        return Ok(())
+                    }
+
                     let mut stdout = std::io::stdout().lock();
 
                     let is_error = output.keyvals.iter().any(|kv| kv.key.is_err() || kv.value.is_err());
@@ -232,7 +266,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                     let should_print_success = !errors_only;
 
                     if should_print_header {
-                        writeln!(stdout, "{}.{}", output.pallet, output.entry)?;
+                        writeln!(stdout, "\n{}.{}", output.pallet, output.entry)?;
                     }
                     for DecodedStorageKeyVal { key, value } in output.keyvals {
                         if key.is_ok() && value.is_ok() && !should_print_success {
@@ -240,18 +274,18 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                         }
 
                         write!(stdout, "  ")?;
-                        match key {
+                        match &key {
                             Ok(key) => {
-                                write_storage_keys(IndentedWriter::<2, _>(&mut stdout), &key)?;
+                                write_storage_keys(IndentedWriter::<2, _>(&mut stdout), key)?;
                             },
                             Err(e) => {
                                 write!(IndentedWriter::<2, _>(&mut stdout), "Key Error: {e:?}")?;
                             }
                         }
                         write!(stdout, "\n    - ")?;
-                        match value {
+                        match &value {
                             Ok(value) => {
-                                write_compact_value(IndentedWriter::<6, _>(&mut stdout), &value)?;
+                                write_compact_value(IndentedWriter::<6, _>(&mut stdout), value)?;
                             },
                             Err(e) => {
                                 write!(IndentedWriter::<6, _>(&mut stdout), "Value Error: {e:?}")?;
@@ -259,6 +293,11 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                             }
                         }
                         writeln!(stdout)?;
+
+                        let is_this_error = key.is_err() || value.is_err();
+                        if is_this_error && !continue_on_error {
+                            break
+                        }
                     }
 
                     if !continue_on_error && is_error {
@@ -281,59 +320,6 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
         }
 
         number += 1;
-    }
-
-    Ok(())
-}
-
-fn write_storage_keys<W: std::io::Write>(writer: W, keys: &[StorageKey]) -> anyhow::Result<()> {
-    let mut writer = ToFmtWrite(writer);
-
-    // Plain entries have no keys:
-    if keys.is_empty() {
-        write!(&mut writer, "plain")?;
-        return Ok(())
-    }
-
-    // blake2: AccountId(0x2331) + ident: Foo(123) + blake2:0x23edbfe
-    for (idx, key) in keys.into_iter().enumerate() {
-        if idx != 0 {
-            write!(&mut writer, " + ")?;
-        }
-
-        match (key.hasher, &key.value) {
-            (StorageHasher::Blake2_128, None) => {
-                write!(&mut writer, "blake2_128: ")?;
-                write!(&mut writer, "{}", hex::encode(&key.hash))?;
-            },
-            (StorageHasher::Blake2_256, None) => {
-                write!(&mut writer, "blake2_256: ")?;
-                write!(&mut writer, "{}", hex::encode(&key.hash))?;
-            },
-            (StorageHasher::Blake2_128Concat, Some(value)) => {
-                write!(&mut writer, "blake2_128_concat: ")?;
-                write_compact_value(&mut writer, &value)?;
-            },
-            (StorageHasher::Twox128, None) => {
-                write!(&mut writer, "twox_128: ")?;
-                write!(&mut writer, "{}", hex::encode(&key.hash))?;
-            },
-            (StorageHasher::Twox256, None) => {
-                write!(&mut writer, "twox_256: ")?;
-                write!(&mut writer, "{}", hex::encode(&key.hash))?;
-            },
-            (StorageHasher::Twox64Concat, Some(value)) => {
-                write!(&mut writer, "twox64_concat: ")?;
-                write_compact_value(&mut writer, &value)?;
-            },
-            (StorageHasher::Identity, Some(value)) => {
-                write!(&mut writer, "ident: ")?;
-                write_compact_value(&mut writer, &value)?;
-            },
-            _ => {
-                bail!("Invalid storage hasher/value pair")
-            }
-        }
     }
 
     Ok(())
@@ -377,4 +363,27 @@ struct DecodedStorageEntry {
 struct DecodedStorageKeyVal {
     key: anyhow::Result<Vec<StorageKey>>,
     value: anyhow::Result<scale_value::Value<String>>
+}
+
+#[derive(Clone)]
+struct StartingEntry {
+    pallet: String,
+    entry: String,
+}
+
+impl std::str::FromStr for StartingEntry {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut parts = s.split(".");
+        let pallet = parts
+            .next()
+            .ok_or_else(|| anyhow!("starting entry should take the form $pallet.$name, but no $pallet found"))?;
+        let entry = parts
+            .next()
+            .ok_or_else(|| anyhow!("starting entry should take the form $pallet.$name, but no $name found"))?;
+        Ok(StartingEntry {
+            pallet: pallet.to_string(),
+            entry: entry.to_string()
+        })
+    }
 }

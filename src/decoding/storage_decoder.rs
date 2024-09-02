@@ -55,8 +55,19 @@ where
 
     let cursor = &mut &*bytes;
 
-    strip_bytes(cursor, 16)
+    let prefix = strip_bytes(cursor, 32)
         .with_context(|| "Cannot strip the pallet and storage entry prefix from the storage key")?;
+
+    // Check that the storage key prefix is what we expect:
+    let expected_prefix = {
+        let mut v = Vec::<u8>::with_capacity(16);
+        v.extend(&sp_crypto_hashing::twox_128(pallet_name.as_bytes()));
+        v.extend(&sp_crypto_hashing::twox_128(storage_entry.as_bytes()));
+        v
+    };
+    if prefix != expected_prefix {
+        bail!("Storage prefix for {pallet_name}.{storage_entry} does not match expected prefix of {}", hex::encode(expected_prefix))
+    }
 
     let decoded: anyhow::Result<StorageKeys> = storage_info.keys.into_iter().map(|key: super::storage_type_info::StorageKey<<Info as StorageTypeInfo>::TypeId>| {
         let hasher = key.hasher;
@@ -94,7 +105,79 @@ where
         }
     }).collect();
 
+    if !cursor.is_empty() {
+        let decoded = print_storage_key_res(&decoded)?;
+        bail!("{} leftover bytes decoding storage keys: {cursor:?}. decoded: {decoded}", cursor.len());
+    }
+
     decoded
+}
+
+fn print_storage_key_res(keys: &anyhow::Result<StorageKeys>) -> anyhow::Result<String> {
+    match keys {
+        Err(e) => Ok(format!("Error: {e}")),
+        Ok(keys) => {
+            let mut s = String::new();
+            write_storage_keys_fmt(&mut s, keys)?;
+            Ok(s)
+        }
+    }
+}
+
+pub fn write_storage_keys<W: std::io::Write>(writer: W, keys: &[StorageKey]) -> anyhow::Result<()> {
+    let writer = crate::utils::ToFmtWrite(writer);
+    write_storage_keys_fmt(writer, keys)
+}
+
+pub fn write_storage_keys_fmt<W: std::fmt::Write>(mut writer: W, keys: &[StorageKey]) -> anyhow::Result<()> {
+    // Plain entries have no keys:
+    if keys.is_empty() {
+        write!(&mut writer, "plain")?;
+        return Ok(())
+    }
+
+    // blake2: AccountId(0x2331) + ident: Foo(123) + blake2:0x23edbfe
+    for (idx, key) in keys.into_iter().enumerate() {
+        if idx != 0 {
+            write!(&mut writer, " + ")?;
+        }
+
+        match (key.hasher, &key.value) {
+            (StorageHasher::Blake2_128, None) => {
+                write!(&mut writer, "blake2_128: ")?;
+                write!(&mut writer, "{}", hex::encode(&key.hash))?;
+            },
+            (StorageHasher::Blake2_256, None) => {
+                write!(&mut writer, "blake2_256: ")?;
+                write!(&mut writer, "{}", hex::encode(&key.hash))?;
+            },
+            (StorageHasher::Blake2_128Concat, Some(value)) => {
+                write!(&mut writer, "blake2_128_concat: ")?;
+                crate::utils::write_compact_value_fmt(&mut writer, &value)?;
+            },
+            (StorageHasher::Twox128, None) => {
+                write!(&mut writer, "twox_128: ")?;
+                write!(&mut writer, "{}", hex::encode(&key.hash))?;
+            },
+            (StorageHasher::Twox256, None) => {
+                write!(&mut writer, "twox_256: ")?;
+                write!(&mut writer, "{}", hex::encode(&key.hash))?;
+            },
+            (StorageHasher::Twox64Concat, Some(value)) => {
+                write!(&mut writer, "twox64_concat: ")?;
+                crate::utils::write_compact_value_fmt(&mut writer, &value)?;
+            },
+            (StorageHasher::Identity, Some(value)) => {
+                write!(&mut writer, "ident: ")?;
+                crate::utils::write_compact_value_fmt(&mut writer, &value)?;
+            },
+            _ => {
+                bail!("Invalid storage hasher/value pair")
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn decode_storage_value_inner<Info, Resolver>(pallet_name: &str, storage_entry: &str, bytes: &[u8], info: &Info, type_resolver: &Resolver) -> anyhow::Result<StorageValue>
@@ -113,6 +196,12 @@ where
     let decoded = decode_or_trace(cursor, value_id, type_resolver)
         .with_context(|| "Cannot decode storage value")?
         .map_context(|type_id| type_id.to_string());
+
+    if !cursor.is_empty() {
+        let mut value_string = String::new();
+        crate::utils::write_value_fmt(&mut value_string, &decoded, "")?;
+        bail!("{} leftover bytes decoding storage value: {cursor:?}. decoded:\n\n{value_string}", cursor.len());
+    }
 
     Ok(decoded)
 }
@@ -139,5 +228,19 @@ where
                 .map(|v| v.map_context(|id| id.to_string()))
                 .with_context(|| format!("Failed to decode type with id {type_id}"))
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_strip_bytes() {
+        let v = vec![0,1,2,3,4,5,6,7,8];
+        let cursor = &mut &*v;
+        let stripped = strip_bytes(cursor, 4).unwrap();
+        assert_eq!(stripped, &[0,1,2,3]);
+        assert_eq!(cursor, &[4,5,6,7,8]);
     }
 }
