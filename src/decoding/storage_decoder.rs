@@ -105,7 +105,7 @@ where
         }
     }).collect();
 
-    if !cursor.is_empty() {
+    if !cursor.is_empty() && decoded.is_ok() {
         let decoded = print_storage_key_res(&decoded)?;
         bail!("{} leftover bytes decoding storage keys: {cursor:?}. decoded: {decoded}", cursor.len());
     }

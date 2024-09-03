@@ -128,6 +128,11 @@ global:
     PerU16: u16
     ElectionScore: "[u128; 3]"
     Percent: u8
+    ActiveEraInfo:
+      index: EraIndex
+      start: Option<Moment>
+    Forcing:       
+      _enum: ['NotForcing', 'ForceNew', 'ForceNone', 'ForceAlways']
 
     # ElectionProviderMultiPhase
     RawSolution<T>:
@@ -140,6 +145,8 @@ global:
 
     # Session
     T::Keys: (AccountId, AccountId, AccountId, AccountId, AccountId)
+    T::ValidatorId: AccountId
+    KeyTypeId: u32
 
     # Grandpa
     T::Hash: H256
@@ -173,6 +180,7 @@ global:
       authorityIndex: AuthIndex
       validatorsLen: u32
     <T::AuthorityId as RuntimeAppPublic>::Signature: H512
+    T::AuthorityId: AccountId
 
     # Democracy
     PropIndex: u32

@@ -105,6 +105,10 @@ where
             });
         }
 
+        // Drop the output channel we've held onto here, so that when all of the task-specific
+        // clones are dropped, the look below will end.
+        drop(output_tx);
+
         // Here, we wait to gather outputs and run the output fn in order for each output,
         // buffering up any that are received out of order.
         let mut output_task_number = starting_task_number;
