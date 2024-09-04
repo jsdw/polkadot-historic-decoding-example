@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::atomic::{AtomicBool, Ordering}};
 use clap::Parser;
 use frame_metadata::RuntimeMetadata;
 use crate::{decoding::storage_decoder::{StorageKey,write_storage_keys}, utils::{self, runner::{RoundRobin, Runner}}};
-use crate::decoding::{ storage_decoder, storage_entries_list::StorageEntry };
+use crate::decoding::{ extend_with_metadata_info, storage_decoder, storage_entries_list::StorageEntry };
 use super::find_spec_changes::SpecVersionUpdate;
 use super::fetch_metadata::state_get_metadata;
 use anyhow::{anyhow, Context};
@@ -204,7 +204,10 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                     async move {
                         let Some(storage_entry) = state.storage_entries.get(task_num as usize) else { return Ok(None) };
                         let metadata = &state.metadata;
-                        let historic_types = &state.historic_types.for_spec_version(state.spec_version as u64);
+                        let mut historic_types_for_spec = state.historic_types.for_spec_version(state.spec_version as u64).to_owned();
+
+                        extend_with_metadata_info(&mut historic_types_for_spec, &metadata)?;
+
                         let pallet = &storage_entry.pallet;
                         let entry = &storage_entry.entry;
                         let at = state.block_hash;
@@ -235,9 +238,9 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                             let value = value
                                 .with_context(|| format!("Failed to get storage item in stream for {pallet}.{entry}"))?;
 
-                            let key = storage_decoder::decode_storage_keys(pallet, entry, &value.key, metadata, historic_types)
+                            let key = storage_decoder::decode_storage_keys(pallet, entry, &value.key, metadata, &historic_types_for_spec)
                                 .with_context(|| format!("Failed to decode storage key in {pallet}.{entry}"));
-                            let value = storage_decoder::decode_storage_value(pallet, entry, &value.value, metadata, historic_types)
+                            let value = storage_decoder::decode_storage_value(pallet, entry, &value.value, metadata, &historic_types_for_spec)
                                 .with_context(|| format!("Failed to decode storage value in {pallet}.{entry}"));
 
                             keyvals.push(DecodedStorageKeyVal {

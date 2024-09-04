@@ -32,6 +32,19 @@ global:
       specVersion: Compact<u32>
       specName: Text
     Text: String
+    ExtrinsicsWeight:
+      normal: Weight
+      operational: Weight
+    EventRecord<Event, Hash>:
+      phase: Phase
+      event: Event
+      topics: Vec<Hash>
+    Phase:
+      _enum:
+        ApplyExtrinsic: u32
+        Finalization: []
+        Initialization: []
+    T::Event: builtin::Event
 
     # Scheduler
     T::BlockNumber: u32

@@ -1,5 +1,5 @@
 use crate::decoding::extrinsic_decoder::{decode_extrinsic, Extrinsic, ExtrinsicCallData};
-use crate::decoding::extrinsic_type_info::extend_with_call_info;
+use crate::decoding::extend_with_metadata_info;
 use frame_metadata::RuntimeMetadata;
 use scale_info_legacy::{ChainTypeRegistry, TypeRegistrySet};
 use std::path::PathBuf;
@@ -105,7 +105,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                     // Prepare new historic type info for this new spec/metadata. Extend the type info
                     // with Call types from the metadataa so that things like utility.batch "Just Work".
                     let mut historic_types_for_spec = historic_types.for_spec_version(this_spec_version as u64).to_owned();
-                    extend_with_call_info(&mut historic_types_for_spec, &metadata)?;
+                    extend_with_metadata_info(&mut historic_types_for_spec, &metadata)?;
 
                     // Print out all of the call types for any metadata we are given, for debugging etc:
                     // extrinsic_type_info::print_call_types(&historic_types_for_spec);
