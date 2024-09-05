@@ -18,23 +18,38 @@ pub fn extend_with_metadata_info(types: &mut scale_info_legacy::TypeRegistrySet,
             let mut new_types = TypeRegistry::empty();
 
             let modules = as_decoded(&$metadata.modules);
-            let modules_iter = modules
-                .iter()
-                .filter(|m| m.calls.is_some())
-                .enumerate();
 
             let mut call_module_variants: Vec<Variant> = vec![];
             let mut event_module_variants: Vec<Variant> = vec![];
-            for (m_idx, module) in modules_iter {
-                // For v12 and v13 metadata, there is a buildin index.
+
+            let mut calls_index = 0u8;
+            let mut events_index = 0u8;
+
+            for module in modules {
+
+                // In older metadatas, calls and event enums can have different indexes
+                // in a given pallet. Pallets without calls or events don't increment
+                // the respective index for them.
+                let (calls_index, events_index) = {
+                    let out = (calls_index, events_index);
+                    if module.calls.is_some() {
+                        calls_index += 1;
+                    }
+                    if module.event.is_some() {
+                        events_index += 1;
+                    }
+                    out
+                };
+
+                // For v12 and v13 metadata, there is a builtin index for everything in a pallet.
                 // If we pass an ident as second arg to this macro, we'll trigger
-                // using that builtin index instead.
+                // using this builtin index instead.
                 $(
                     let $builtin_index = true;
-                    let m_idx = if $builtin_index {
-                        module.index as usize
+                    let (calls_index, events_index) = if $builtin_index {
+                        (module.index, module.index)
                     } else {
-                        m_idx
+                        (calls_index, events_index)
                     };
                 )?
 
@@ -73,7 +88,7 @@ pub fn extend_with_metadata_info(types: &mut scale_info_legacy::TypeRegistrySet,
                     // Reference it in the modules enum we're building:
                     let call_enum_lookup_name = LookupName::parse(&call_enum_name_str).unwrap();
                     call_module_variants.push(Variant {
-                        index: m_idx as u8,
+                        index: calls_index,
                         name: module_name.clone(),
                         fields: VariantDesc::TupleOf(vec![call_enum_lookup_name])
                     });
@@ -108,7 +123,7 @@ pub fn extend_with_metadata_info(types: &mut scale_info_legacy::TypeRegistrySet,
                     // Reference it in the modules enum we're building:
                     let event_enum_lookup_name = LookupName::parse(&event_enum_name_str).unwrap();
                     event_module_variants.push(Variant {
-                        index: m_idx as u8,
+                        index: events_index,
                         name: module_name.clone(),
                         fields: VariantDesc::TupleOf(vec![event_enum_lookup_name])
                     });

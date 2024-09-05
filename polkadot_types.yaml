@@ -7,6 +7,7 @@ global:
       firstHeader: Header
       secondHeader: Header
     BabeAuthorityWeight: u64
+    schnorrkel::Randomness: Hash
 
     # System
     Perbill: u32
@@ -45,6 +46,51 @@ global:
         Finalization: []
         Initialization: []
     T::Event: builtin::Event
+    DispatchInfo:
+      weight: Weight
+      class: DispatchClass
+      paysFee: Pays
+    DispatchClass:
+      _enum: ['Normal', 'Operational', 'Mandatory']
+    Pays:
+      _enum: ['Yes', 'No']
+    DispatchResult: Result<(), DispatchError>
+    DispatchError:
+      _enum:
+        Other: []
+        CannotLookup: []
+        BadOrigin: []
+        Module: DispatchErrorModule
+        ConsumerRemaining: []
+        NoProviders: []
+        TooManyConsumers: []
+        Token: TokenError
+        Arithmetic: ArithmeticError
+        Transactional: TransactionalError
+        Exhausted: []
+        Corruption: []
+        Unavailable: []
+    DispatchErrorModule:
+      index: u8
+      error: u8
+    TokenError:
+      _enum:
+        - NoFunds
+        - WouldDie
+        - BelowMinimum
+        - CannotCreate
+        - UnknownAsset
+        - Frozen
+        - Unsupported
+        # these are dropped, but still in older versions
+        # (if this adjusts, will need to take a re-look)
+        - Underflow
+        - Overflow
+    ArithmeticError:
+      _enum: ['Underflow', 'Overflow', 'DivisionByZero']
+    TransactionError:
+      _enum: ['LimitReached', 'NoLayer']
+    EventIndex: u32
 
     # Scheduler
     T::BlockNumber: u32
@@ -65,6 +111,14 @@ global:
     T::Balance: Balance
     Releases: 
       _enum: ['V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10']
+    BalanceLock<Balance>:
+      id: LockIdentifier
+      amount: Balance
+      reasons: Reasons
+    LockIdentifier: '[u8; 8]'
+    Reasons:
+      _enum: ['Fee', 'Misc', 'All']
+    Multiplier: u128
 
     # Authorship
     T::Header:
@@ -102,6 +156,13 @@ global:
     ConsensusEngineId: '[u8; 4]'
 
     # Staking
+    RewardDestination:
+      _enum:
+        Staked: []
+        Stash: []
+        Controller: []
+        Account: AccountId
+        None: []
     RewardDestination<AccountId>:
       _enum:
         Staked: []
@@ -139,13 +200,47 @@ global:
     ValidatorIndex: u16
     OffchainAccuracy: PerU16
     PerU16: u16
-    ElectionScore: "[u128; 3]"
+    ElectionScore: '[u128; 3]'
     Percent: u8
     ActiveEraInfo:
       index: EraIndex
       start: Option<Moment>
     Forcing:       
       _enum: ['NotForcing', 'ForceNew', 'ForceNone', 'ForceAlways']
+    StakingLedger<AccountId, Balance>:
+      stash: AccountId
+      total: Compact<Balance>
+      active: Compact<Balance>
+      unlocking: Vec<UnlockChunk<Balance>>
+      claimedRewards: Vec<EraIndex>
+    UnlockChunk<Balance>:
+      value: Compact<Balance>
+      era: Compact<BlockNumber>
+    EraIndex: u32
+    Nominations<AccountId>:
+      targets: Vec<AccountId>
+      submittedIn: EraIndex
+      suppressed: bool
+    Moment: u64
+    EraRewardPoints<AccountId>:
+      total: u32
+      individual: BTreeMap<AccountId, u32>
+    ElectionResult<AccountId, Balance>:
+      electedStashes: Vec<AccountId>
+      exposures: Vec<(AccountId, Exposure<AccountId, Balance>)>
+      compute: ElectionCompute
+    ElectionCompute:
+      # in previous versions the last entry was "AuthorityId"
+      # (since no data attached, and it is via SCALE can rename)
+      _enum: ['OnChain', 'Signed', 'Unsigned']
+    Exposure<AccountId, Balance>:
+      total: Compact<Balance>
+      own: Compact<Balance>
+      others: Vec<IndividualExposure<AccountId, Balance>>
+    IndividualExposure<AccountId, Balance>:
+      who: AccountId
+      value: Compact<Balance>
+
 
     # ElectionProviderMultiPhase
     RawSolution<T>:
@@ -489,13 +584,6 @@ global:
 forSpec:
   - range: [23, null]
     types:
-      RewardDestination<AccountId>:
-        _enum:
-          Staked: []
-          Stash: []
-          Controller: []
-          Account: AccountId
-          None: []
       CompactScoreCompact: (Compact<ValidatorIndex>, Compact<OffchainAccuracy>)
       CompactAssignments:
         votes1: Vec<(Compact<NominatorIndex>, Compact<ValidatorIndex>)>

@@ -13,7 +13,7 @@ use subxt::{backend::{
     legacy::{ LegacyBackend, LegacyRpcMethods }, rpc::RpcClient, Backend
 }, utils::H256, PolkadotConfig};
 use std::io::Write as _;
-use crate::utils::{IndentedWriter, write_compact_value};
+use crate::utils::{IndentedWriter, write_value};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -288,7 +288,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                         write!(stdout, "\n    - ")?;
                         match &value {
                             Ok(value) => {
-                                write_compact_value(IndentedWriter::<6, _>(&mut stdout), value)?;
+                                write_value(IndentedWriter::<6, _>(&mut stdout), value)?;
                             },
                             Err(e) => {
                                 write!(IndentedWriter::<6, _>(&mut stdout), "Value Error: {e:?}")?;

@@ -194,12 +194,12 @@ where
     let cursor = &mut &*bytes;
 
     let decoded = decode_or_trace(cursor, value_id, type_resolver)
-        .with_context(|| "Cannot decode storage value")?
+        .with_context(|| format!("Cannot decode storage value"))? // 0x{}", hex::encode(bytes)))?
         .map_context(|type_id| type_id.to_string());
 
     if !cursor.is_empty() {
         let mut value_string = String::new();
-        crate::utils::write_value_fmt(&mut value_string, &decoded, "")?;
+        crate::utils::write_value_fmt(&mut value_string, &decoded)?;
         bail!("{} leftover bytes decoding storage value: {cursor:?}. decoded:\n\n{value_string}", cursor.len());
     }
 
@@ -221,9 +221,12 @@ where
     Resolver: TypeResolver<TypeId = Id>,
     Id: core::fmt::Debug + core::fmt::Display + Clone + Send + Sync + 'static
 {
+    let initial = *cursor;
     match scale_value::scale::decode_as_type(cursor, type_id.clone(), types) {
         Ok(value) => Ok(value.map_context(|id| id.to_string())),
         Err(_e) => {
+            // Reset cursor incase it's been consumed by the above call.
+            *cursor = initial;
             scale_value::scale::tracing::decode_as_type(cursor, type_id.clone(), types)
                 .map(|v| v.map_context(|id| id.to_string()))
                 .with_context(|| format!("Failed to decode type with id {type_id}"))

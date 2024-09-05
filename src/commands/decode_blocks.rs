@@ -203,7 +203,7 @@ fn print_call_data<W: std::io::Write>(mut w: W, call_data: &ExtrinsicCallData) -
     writeln!(w, "    Call data:")?;
     for arg in &call_data.args {
         write!(w, "      {}: ", arg.0)?;
-        utils::write_value(&mut w, &arg.1)?;
+        utils::write_value(utils::IndentedWriter::<6,_>(&mut w), &arg.1)?;
         writeln!(w)?;
     }
     Ok(())
@@ -213,7 +213,7 @@ fn print_signed_exts<W: std::io::Write>(mut w: W, signed_exts: &[(String, scale_
     writeln!(w, "    Signed exts:")?;
     for ext in signed_exts {
         write!(w, "      {}: ", ext.0)?;
-        utils::write_value(&mut w, &ext.1)?;
+        utils::write_value(utils::IndentedWriter::<6,_>(&mut w), &ext.1)?;
         writeln!(w)?;
     }
     Ok(())

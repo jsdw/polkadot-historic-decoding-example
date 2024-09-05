@@ -31,14 +31,13 @@ pub fn as_decoded<A, B>(item: &frame_metadata::decode_different::DecodeDifferent
 
 /// Write out a pretty Value using `std::io::Write`.
 pub fn write_value<W: std::io::Write, T: std::fmt::Display>(w: W, value: &Value<T>) -> core::fmt::Result {
-    write_value_fmt(ToFmtWrite(w), value, "      ")
+    write_value_fmt(ToFmtWrite(w), value)
 }
 
 /// Write out a pretty Value using `std::fmt::Write`.
-pub fn write_value_fmt<W: std::fmt::Write, T: std::fmt::Display>(w: W, value: &Value<T>, leading_indent: impl Into<String>) -> core::fmt::Result {
+pub fn write_value_fmt<W: std::fmt::Write, T: std::fmt::Display>(w: W, value: &Value<T>) -> core::fmt::Result {
     scale_value::stringify::to_writer_custom()
         .pretty()
-        .leading_indent(leading_indent.into())
         .format_context(|type_id, w: &mut W| write!(w, "{type_id}"))
         .add_custom_formatter(|v, w: &mut W| scale_value::stringify::custom_formatters::format_hex(v,w))
         .add_custom_formatter(|v, w: &mut W| {
@@ -54,9 +53,9 @@ pub fn write_value_fmt<W: std::fmt::Write, T: std::fmt::Display>(w: W, value: &V
         .write(&value, w)
 }
 
-pub fn write_compact_value<W: std::io::Write>(writer: W, value: &Value<String>) -> anyhow::Result<()> {
-    write_compact_value_fmt(ToFmtWrite(writer), value)
-}
+// pub fn write_compact_value<W: std::io::Write>(writer: W, value: &Value<String>) -> anyhow::Result<()> {
+//     write_compact_value_fmt(ToFmtWrite(writer), value)
+// }
 
 pub fn write_compact_value_fmt<W: std::fmt::Write>(writer: W, value: &Value<String>) -> anyhow::Result<()> {
     scale_value::stringify::to_writer_custom()
