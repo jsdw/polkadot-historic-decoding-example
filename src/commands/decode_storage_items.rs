@@ -249,8 +249,28 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                                 break
                             }
 
-                            let value = value
-                                .with_context(|| format!("Failed to get storage item in stream for {pallet}.{entry}"))?;
+                            let value = match value {
+                                Ok(val) => val,
+                                // Some storage values are too big for the RPC client to download (eg exceed 10MB). 
+                                // For now, this hack just ignores such errors.
+                                Err(subxt::Error::Rpc(subxt::error::RpcError::ClientError(e))) => {
+                                    let err = e.to_string();
+                                    if err.contains("message too large") || err.contains("Response is too big") {
+                                        let err = scale_value::Value::string("Skipping this entry: it is too large").map_context(|_| "Unknown".to_string());
+                                        keyvals.push(DecodedStorageKeyVal {
+                                            key_bytes: Vec::new(),
+                                            key: Ok(vec![StorageKey { hash: vec![], value: Some(err.clone()), hasher: StorageHasher::Identity }]),
+                                            value: Ok(err)
+                                        });
+                                        continue
+                                    }
+                                    return Err(subxt::Error::Rpc(subxt::error::RpcError::ClientError(e)))
+                                        .with_context(|| format!("Failed to get storage item in stream for {pallet}.{entry}"));
+                                },
+                                Err(e) => {
+                                    return Err(e).with_context(|| format!("Failed to get storage item in stream for {pallet}.{entry}"));
+                                }
+                            };
 
                             let key_bytes = &value.key;
 

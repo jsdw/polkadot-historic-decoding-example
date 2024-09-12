@@ -107,7 +107,6 @@ global:
       mandatory: Weight
     DigestOf<T>: Digest
 
-
     # Scheduler
     T::BlockNumber: u32
     BlockNumber: u32
@@ -331,6 +330,18 @@ global:
         Signed: []
         Unsigned: (bool, BlockNumber)
         Emergency: []
+    ReadySolution<AccountId>:
+      supports: Vec<(AccountId, SolutionSupport<AccountId>)>
+      score: ElectionScore
+      compute: ElectionCompute
+    ElectionCompute:
+      # in previous versions the last entry was "AuthorityId"
+      # (since no data attached, and it is via SCALE can rename)
+      _enum: ['OnChain', 'Signed', 'Unsigned']
+    SolutionSupport<AccountId>:
+      total: ExtendedBalance
+      voters: Vec<(AccountId, ExtendedBalance)>
+    ExtendedBalance: u128
 
     # Session
     T::Keys: (AccountId, AccountId, AccountId, AccountId, AccountId)
