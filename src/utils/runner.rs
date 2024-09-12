@@ -80,11 +80,11 @@ where
                                 // None indicates nothing left to do in this runner.
                                 return
                             },
-                            Err(_e) => {
+                            Err(e) => {
                                 task_retries += 1;
                                 if task_retries > MAX_RETRIES {
                                     // task went wrong a few times; re-initialize everything.
-                                    // eprintln!("Error running task {current_task_num}: {e}");
+                                    eprintln!("Error running task {current_task_num}: {e:?}");
                                     continue 'outer
                                 } else {
                                     // Try task again.

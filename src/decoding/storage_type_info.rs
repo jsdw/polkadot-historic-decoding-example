@@ -361,8 +361,8 @@ to_latest_storage_hasher!(to_storage_hasher_v14, frame_metadata::v14::StorageHas
 to_latest_storage_hasher!(to_storage_hasher_v15, frame_metadata::v15::StorageHasher);
 
 fn decode_lookup_name_or_err(s: &DecodeDifferent<&str, String>, pallet_name: &str) -> anyhow::Result<LookupName> {
-    let ty = as_decoded(s);
-    lookup_name_or_err(ty, pallet_name)
+    let ty = sanitize_type_name(&as_decoded(s));
+    lookup_name_or_err(&ty, pallet_name)
 }
 
 fn lookup_name_or_err(ty: &str, pallet_name: &str) -> anyhow::Result<LookupName> {
@@ -370,4 +370,12 @@ fn lookup_name_or_err(ty: &str, pallet_name: &str) -> anyhow::Result<LookupName>
         .map_err(|e| anyhow!("Could not parse type name {ty}: {e}"))?
         .in_pallet(pallet_name);
     Ok(id)
+}
+
+fn sanitize_type_name(name: &str) -> std::borrow::Cow<'_, str> {
+    if name.contains('\n') {
+        std::borrow::Cow::Owned(name.replace('\n', ""))
+    } else {
+        std::borrow::Cow::Borrowed(name)
+    }
 }

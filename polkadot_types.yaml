@@ -8,6 +8,13 @@ global:
       secondHeader: Header
     BabeAuthorityWeight: u64
     schnorrkel::Randomness: Hash
+    Slot: u64
+    BabeEpochConfiguration:
+      c: (u64, u64)
+      allowedSlots: AllowedSlots
+    AllowedSlots:
+      _enum: ['PrimarySlots', 'PrimaryAndSecondaryPlainSlots', 'PrimaryAndSecondaryVRFSlots']
+    MaybeRandomness: Option<schnorrkel::Randomness>
 
     # System
     Perbill: u32
@@ -91,13 +98,45 @@ global:
     TransactionError:
       _enum: ['LimitReached', 'NoLayer']
     EventIndex: u32
+    weights::ExtrinsicsWeight:
+      normal: Weight
+      operational: Weight
+    ConsumedWeight:
+      normal: Weight
+      operational: Weight
+      mandatory: Weight
+    DigestOf<T>: Digest
+
 
     # Scheduler
     T::BlockNumber: u32
-    schedule::Period<BN>: '(BN, u32)'
+    BlockNumber: u32
+    schedule::Period<BlockNumber>: (BlockNumber, u32)
     schedule::Priority: u8
     <T as Trait>::Call: builtin::Call
     <T as Config>::Call: builtin::Call
+    Scheduled<Call, BlockNumber>:
+      maybeId: Option<Bytes>
+      priority: schedule::Priority
+      call: Call
+      maybePeriodic: Option<schedule::Period<BlockNumber>>
+      # origin: T::PalletsOrigin
+    TaskAddress<BlockNumber>: (BlockNumber, u32)
+    Scheduled<Call, BlockNumber, PalletsOrigin, UnusedAccountId>:
+      maybeId: Option<Bytes>
+      priority: schedule::Priority
+      call: Call
+      maybePeriodic: Option<(BlockNumber, u32)>
+      origin: PalletsOrigin
+    T::PalletsOrigin:
+      # This should be built from metadata in an ideal world.
+      _enum:
+        System: SystemOrigin
+    SystemOrigin:
+      _enum:
+        Root: []
+        Signed: AccountId
+        None: []
 
     # Timestamp
     T::Moment: u64
@@ -240,7 +279,43 @@ global:
     IndividualExposure<AccountId, Balance>:
       who: AccountId
       value: Compact<Balance>
+    ElectionStatus<BlockNumber>:
+      _enum:
+        Close: []
+        Open: BlockNumber
+    slashing::SlashingSpans:
+      spanIndex: slashing::SpanIndex
+      lastStart: EraIndex
+      lastNonzeroSlash: EraIndex
+      prior: Vec<EraIndex>
+    slashing::SpanIndex: u32
+    UnappliedSlash<AccountId, Balance>:
+      validator: AccountId
+      own: Balance
+      others: Vec<(AccountId, Balance)>
+      reporters: Vec<AccountId>
+      payout: Balance
+    slashing::SlashingSpans:
+      spanIndex: slashing::SpanIndex
+      lastStart: EraIndex
+      lastNonzeroSlash: EraIndex
+      prior: Vec<EraIndex>
+    slashing::SpanRecord<Balance>:
+      slashed: Balance
+      paidOut: Balance
 
+    # Offences
+    ReportIdOf<T>: Hash
+    OffenceDetails<Reporter, IdentificationTuple>:
+      offender: IdentificationTuple
+      reporters: Vec<Reporter>
+    T::IdentificationTuple: (ValidatorId, FullIdentification<AccountId, Balance>)
+    FullIdentification<AccountId, Balance>:
+      total: Compact<Balance>
+      own: Compact<Balance>
+      others: Vec<IndividualExposure<AccountId, Balance>>
+    Kind: '[u8; 16]'
+    OpaqueTimeSlot: Bytes
 
     # ElectionProviderMultiPhase
     RawSolution<T>:
@@ -250,6 +325,12 @@ global:
     SolutionOrSnapshotSize:
       voters: Compact<u32>
       targets: Compact<u32>
+    Phase<BlockNumber>:
+      _enum:
+        Off: []
+        Signed: []
+        Unsigned: (bool, BlockNumber)
+        Emergency: []
 
     # Session
     T::Keys: (AccountId, AccountId, AccountId, AccountId, AccountId)
@@ -279,6 +360,7 @@ global:
     GrandpaPrevote<Hash, BlockNumber>:
       targetHash: Hash,
       targetNumber: BlockNumber
+    SetId: u64
 
     # ImOnline
     Heartbeat<BN>:
@@ -289,6 +371,8 @@ global:
       validatorsLen: u32
     <T::AuthorityId as RuntimeAppPublic>::Signature: H512
     T::AuthorityId: AccountId
+    ValidatorId<T>: AccountId
+
 
     # Democracy
     PropIndex: u32
@@ -318,6 +402,56 @@ global:
         - Locked5x,
         # 6x votes,locked for 32x...
         - Locked6x
+    ReferendumInfo<BlockNumber, Hash, Balance>:
+      _enum:
+        Ongoing: ReferendumStatus<BlockNumber, Hash, Balance>
+        Finished: ReferendumInfoFinished<BlockNumber>
+    ReferendumStatus<BlockNumber, Hash, Balance>:
+      end: BlockNumber
+      proposalHash: Hash
+      threshold: VoteThreshold
+      delay: BlockNumber
+      tally: Tally<Balance>
+    Tally<Balance>:
+      ayes: Balance
+      nays: Balance
+      turnout: Balance
+    VoteThreshold:
+      _enum: [
+        'Super Majority Approve',
+        'Super Majority Against',
+        'Simple Majority'
+      ]
+    ReferendumInfoFinished<BlockNumber>:
+      approved: bool
+      end: BlockNumber
+    Voting<Balance, AccountId, BlockNumber>:
+      _enum:
+        Direct: VotingDirect<Balance, BlockNumber>
+        Delegating: VotingDelegating<Balance, AccountId, BlockNumber>
+    VotingDirect<Balance, BlockNumber>:
+      votes: Vec<(ReferendumIndex, AccountVote<Balance>)>
+      delegations: Delegations<Balance>
+      prior: (BlockNumber, Balance)
+    VotingDelegating<Balance, AccountId, BlockNumber>:
+      balance: Balance
+      target: AccountId
+      conviction: Conviction
+      delegations: Delegations<Balance>
+      prior: (BlockNumber, Balance)
+    Delegations<Balance>:
+      votes: Balance
+      capital: Balance
+    PreimageStatus<AccountId, Balance, BlockNumber>:
+      _enum:
+        Missing: BlockNumber
+        Available: PreimageStatusAvailable<AccountId, Balance, BlockNumber>
+    PreimageStatusAvailable<AccountId, Balance, BlockNumber>:
+      data: Bytes
+      provider: AccountId
+      deposit: Balance
+      since: BlockNumber
+      expiry: Option<BlockNumber>
 
     # Council
     MemberCount: u32
@@ -337,6 +471,14 @@ global:
         Member: []
         RunnerUp: []
         Candidate: Compact<u32>
+    SeatHolder<AccountId, Balance>:
+      who: AccountId
+      stake: Balance
+      deposit: Balance
+    Voter<AccountId, Balance>:
+      votes: Vec<AccountId>
+      stake: Balance
+      deposit: Balance
 
     # Parachains
     AttestedCandidate:
@@ -421,6 +563,27 @@ global:
         LowQuality: []
         Erroneous: []
     IdentityFields: u64 # from least significant bit to most, 1 bit enabled for Display, Legal, Web, Riot, Email, PgpFingerprint, Image, Twitter
+    Registration<Balance>:
+      judgements: Vec<RegistrationJudgement>
+      deposit: Balance
+      info: IdentityInfo
+    Registration<Balance, MaxRegistrars, MaxAdditionalFields>: Registration<Balance>
+    RegistrationJudgement: (RegistrarIndex, IdentityJudgement)
+    IdentityJudgement:
+      _enum:
+        Unknown: []
+        FeePaid: Balance
+        Reasonable: []
+        KnownGood: []
+        OutOfDate: []
+        LowQuality: []
+        Erroneous: []
+    RegistrarIndex: u32
+    RegistrarInfo<Balance, AccountId>:
+      account: AccountId
+      fee: Balance
+      fields: IdentityFields
+      
 
     # Poll
     Approvals: "[bool; 4]"
@@ -489,14 +652,89 @@ global:
         - Completed
     Permill: u32
     CallHashOf<T>: Hash
+    ProxyDefinition<AccountId, ProxyType, BlockNumber>:
+      delegate: AccountId
+      proxyType: ProxyType
+      delay: BlockNumber
+    Announcement<AccountId, CallHash, BlockNumber>:
+      real: AccountId
+      callHash: CallHash
+      height: BlockNumber
 
     # MultiSig
     OpaqueCall: Vec<u8>
+    Multisig<BlockNumber, Balance, AccountId>:
+      when: Timepoint<BlockNumber>
+      deposit: Balance
+      depositor: AccountId
+      approvals: Vec<AccountId>
+    Timepoint<BlockNumber>:
+      height: BlockNumber
+      index: u32
 
     # Treasury
     BountyIndex: u32
+    Proposal<AccountId, Balance>:
+      proposer: AccountId
+      value: Balance
+      beneficiary: AccountId
+      bond: Balance
+    OpenTip<AccountId, Balance, BlockNumber, Hash>:
+      reason: Hash
+      who: AccountId
+      finder: AccountId
+      deposit: Balance
+      closes: Option<BlockNumber>
+      tips: Vec<(AccountId, Balance)>
+      findersFee: bool
+    Bounty<AccountId, Balance, BlockNumber>:
+      proposer: AccountId
+      value: Balance
+      fee: Balance
+      curatorDeposit: Balance
+      bond: Balance
+      status: BountyStatus<AccountId, BlockNumber>
+    BountyStatus<AccountId, BlockNumber>:
+      _enum:
+        Proposed: []
+        Approved: []
+        Funded: []
+        CuratorProposed: BountyStatusCuratorProposed<AccountId>
+        Active: BountyStatusActive<AccountId, BlockNumber>
+        PendingPayout: BountyStatusPendingPayout<AccountId, BlockNumber>
+    BountyStatusActive<AccountId, BlockNumber>:
+      curator: AccountId
+      updateDue: BlockNumber
+    BountyStatusCuratorProposed<AccountId>:
+      curator: AccountId
+    BountyStatusPendingPayout<AccountId, BlockNumber>:
+      curator: AccountId
+      beneficiary: AccountId
+      unlockAt: BlockNumber
+
+    # Purchase
+    AccountStatus<Balance>:
+      validity: AccountValidity
+      freeBalance: Balance
+      lockedBalance: Balance
+      signature: Vec<u8>
+      vat: Permill
+    AccountValidity:
+      _enum: ['Invalid', 'Initiated', 'Pending', 'ValidLow', 'ValidHigh', 'Completed']
+
+    # imOnline
+    OpaqueNetworkState:
+      peerId: OpaquePeerId
+      externalAddresses: Vec<OpaqueMultiaddr>
+    OpaquePeerId: Bytes
+    OpaqueMultiaddr: Bytes
+    AuthIndex: u32
+    AuthoritySignature: Signature
 
     # Manually defined types below:
+
+    WeakBoundedVec<Item, N>: Vec<Item>
+    BoundedVec<Item, N>: Vec<Item>
 
     Balance: u128
     BalanceOf<T>: Balance
@@ -539,15 +777,6 @@ global:
         Ed25519: Ed25519Signature
         Sr25519: Sr25519Signature
         Ecdsa: EcdsaSignature
-
-    # imOnline
-    OpaqueNetworkState:
-      peerId: OpaquePeerId
-      externalAddresses: Vec<OpaqueMultiaddr>
-    OpaquePeerId: Bytes
-    OpaqueMultiaddr: Bytes
-    AuthIndex: u32
-    AuthoritySignature: Signature
 
     # Hardcoded types for old metadatas that don't know about them.
     hardcoded::ExtrinsicAddress: AccountId32
@@ -602,6 +831,9 @@ forSpec:
         votes14: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 13], Compact<ValidatorIndex>)>
         votes15: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 14], Compact<ValidatorIndex>)>
         votes16: Vec<(Compact<NominatorIndex>, [CompactScoreCompact; 15], Compact<ValidatorIndex>)>
+  - range: [25, null]
+    types:
+      RefCount: u32
   - range: [28, null]
     types:
       hardcoded::ExtrinsicAddress: MultiAddress<AccountId32,u32>
@@ -610,3 +842,18 @@ forSpec:
       ValidatorPrefs:
         commission: Compact<Perbill>
         blocked: bool
+  - range: [28, 29]
+    types:
+      AccountInfo<Index, AccountData>:
+        nonce: Index
+        consumers: RefCount
+        providers: RefCount
+        data: AccountData
+  - range: [30, null]
+    types:
+      AccountInfo<Index, AccountData>:
+        nonce: Index
+        consumers: RefCount
+        providers: RefCount
+        sufficients: RefCount
+        data: AccountData

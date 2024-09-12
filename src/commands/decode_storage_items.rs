@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::atomic::{AtomicBool, Ordering}};
 use clap::Parser;
 use frame_metadata::RuntimeMetadata;
-use crate::{decoding::storage_decoder::{StorageKey,write_storage_keys}, utils::{self, runner::{RoundRobin, Runner}}};
+use crate::{decoding::{storage_decoder::{write_storage_keys, StorageKey}, storage_type_info::StorageHasher}, utils::{self, runner::{RoundRobin, Runner}}};
 use crate::decoding::{ extend_with_metadata_info, storage_decoder, storage_entries_list::StorageEntry };
 use super::find_spec_changes::SpecVersionUpdate;
 use super::fetch_metadata::state_get_metadata;
@@ -14,6 +14,7 @@ use subxt::{backend::{
 }, utils::H256, PolkadotConfig};
 use std::io::Write as _;
 use crate::utils::{IndentedWriter, write_value};
+use self::skip::SkipDecoding;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -51,7 +52,12 @@ pub struct Opts {
     /// The starting entry eg Staking.ActiveEra. We'll begin from this on
     /// our initial block.
     #[arg(long)]
-    starting_entry: Option<StartingEntry>
+    starting_entry: Option<StartingEntry>,
+
+    /// The max number of storage items to download for a given storage map.
+    /// Defaults to downloading all of them.
+    #[arg(long, default_value = "0")]
+    max_storage_entries: usize
 }
 
 pub async fn run(opts: Opts) -> anyhow::Result<()> {
@@ -61,6 +67,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
     let urls = Arc::new(RoundRobin::new(utils::url_or_polkadot_rpc_nodes(opts.url.as_deref())));
     let errors_only = opts.errors_only;
     let continue_on_error = opts.continue_on_error;
+    let max_storage_entries = opts.max_storage_entries;
 
     let historic_types: Arc<ChainTypeRegistry> = Arc::new({
         let historic_types_str = std::fs::read_to_string(&opts.types)
@@ -180,11 +187,12 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                     let historic_types = historic_types.clone();
                     let metadata = metadata.clone();
                     let spec_version = *spec_version;
+                    let skipper = SkipDecoding::new();
 
                     async move {
                         let rpc_client = RpcClient::from_insecure_url(url).await?;
                         let backend = LegacyBackend::builder()
-                            .storage_page_size(64)
+                            .storage_page_size(128)
                             .build(rpc_client);
 
                         Ok(Some(Arc::new(RunnerState {
@@ -193,12 +201,13 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                             storage_entries,
                             historic_types,
                             metadata,
-                            spec_version
+                            spec_version,
+                            skipper,
                         })))
                     }
                 },
                 // Based on task number, decode an entry from the list, returning None when number exceeds list length.
-                |task_num, state| {
+                move |task_num, state| {
                     let state = state.clone();
 
                     async move {
@@ -211,7 +220,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                         let pallet = &storage_entry.pallet;
                         let entry = &storage_entry.entry;
                         let at = state.block_hash;
-                        let key = {
+                        let root_key = {
                             let mut hash = Vec::with_capacity(32);
                             hash.extend(&sp_crypto_hashing::twox_128(pallet.as_bytes()));
                             hash.extend(&sp_crypto_hashing::twox_128(entry.as_bytes()));
@@ -222,11 +231,11 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                         let is_iterable = crate::decoding::storage_type_info::is_iterable(pallet, entry, &state.metadata)?;
                         let mut values = if is_iterable {
                             state.backend
-                                .storage_fetch_descendant_values(key, at)
+                                .storage_fetch_descendant_values(root_key, at)
                                 .await
                                 .with_context(|| format!("Failed to get a stream of storage items for {pallet}.{entry}"))
                         } else {
-                            state.backend.storage_fetch_values(vec![key], at)
+                            state.backend.storage_fetch_values(vec![root_key], at)
                                 .await
                                 .with_context(|| format!("Failed to fetch value at {pallet}.{entry}"))
                         }?;
@@ -234,19 +243,40 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                         let mut keyvals = vec![];
 
                         // Decode each value we get back.
+                        let mut n = 0;
                         while let Some(value) = values.next().await {
+                            if max_storage_entries > 0 &&  n >= max_storage_entries {
+                                break
+                            }
+
                             let value = value
                                 .with_context(|| format!("Failed to get storage item in stream for {pallet}.{entry}"))?;
 
-                            let key = storage_decoder::decode_storage_keys(pallet, entry, &value.key, metadata, &historic_types_for_spec)
+                            let key_bytes = &value.key;
+
+                            // Skip over corrupt entries.
+                            if state.skipper.should_skip(state.spec_version, key_bytes) {
+                                let err = scale_value::Value::string("Skipping this entry: it is corrupt").map_context(|_| "Unknown".to_string());
+                                keyvals.push(DecodedStorageKeyVal {
+                                    key_bytes: Vec::new(),
+                                    key: Ok(vec![StorageKey { hash: vec![], value: Some(err.clone()), hasher: StorageHasher::Identity }]),
+                                    value: Ok(err)
+                                });
+                                continue
+                            }
+
+                            let key = storage_decoder::decode_storage_keys(pallet, entry, key_bytes, metadata, &historic_types_for_spec)
                                 .with_context(|| format!("Failed to decode storage key in {pallet}.{entry}"));
                             let value = storage_decoder::decode_storage_value(pallet, entry, &value.value, metadata, &historic_types_for_spec)
                                 .with_context(|| format!("Failed to decode storage value in {pallet}.{entry}"));
 
                             keyvals.push(DecodedStorageKeyVal {
+                                key_bytes: key_bytes.clone(),
                                 key,
                                 value
-                            })
+                            });
+
+                            n += 1;
                         }
 
                         Ok(Some(DecodedStorageEntry {
@@ -269,20 +299,22 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                     let should_print_success = !errors_only;
 
                     if should_print_header {
-                        writeln!(stdout, "\n{}.{}", output.pallet, output.entry)?;
+                        writeln!(stdout, "\n{}.{} (b:{block_number}, n:{number})", output.pallet, output.entry)?;
                     }
-                    for DecodedStorageKeyVal { key, value } in output.keyvals {
+                    for (idx, DecodedStorageKeyVal { key_bytes: _, key, value }) in output.keyvals.iter().enumerate() {
                         if key.is_ok() && value.is_ok() && !should_print_success {
                             continue
                         }
 
-                        write!(stdout, "  ")?;
+                        //println!("{}", hex::encode(key_bytes));
+
+                        write!(stdout, "  [{idx}] ")?;
                         match &key {
                             Ok(key) => {
                                 write_storage_keys(IndentedWriter::<2, _>(&mut stdout), key)?;
                             },
                             Err(e) => {
-                                write!(IndentedWriter::<2, _>(&mut stdout), "Key Error: {e:?}")?;
+                                write!(IndentedWriter::<2, _>(&mut stdout), "Key Error (block {block_number}, number {number}): {e:?}")?;
                             }
                         }
                         write!(stdout, "\n    - ")?;
@@ -291,7 +323,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                                 write_value(IndentedWriter::<6, _>(&mut stdout), value)?;
                             },
                             Err(e) => {
-                                write!(IndentedWriter::<6, _>(&mut stdout), "Value Error: {e:?}")?;
+                                write!(IndentedWriter::<6, _>(&mut stdout), "Value Error (block {block_number}, number {number}): {e:?}")?;
 
                             }
                         }
@@ -328,6 +360,33 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// This allows us to skip decoding entries that are corrupt or otherwise undecodeable.
+mod skip {
+    pub struct SkipDecoding(Vec<(Vec<u8>, u32)>);
+
+    impl SkipDecoding {
+        /// This defines the hardcoded items to skip.
+        pub fn new() -> Self {
+            SkipDecoding(vec![
+                (
+                    // Proxy.proxies has a corrupt entry in it for account ID 0x0E6DE68B13B82479FBE988AB9ECB16BAD446B67B993CDD9198CD41C7C6259C49:
+                    hex::decode("1809d78346727a0ef58c0fa03bafa3231d885dcfb277f185f2d8e62a5f290c854d2d16b4be62d0e00e6de68b13b82479fbe988ab9ecb16bad446b67b993cdd9198cd41c7c6259c49").unwrap(),
+                    // spec version it becomes a problem:
+                    23
+                )
+            ])
+        }
+
+        /// Should we skip some entry.
+        pub fn should_skip(&self, spec_version: u32, key: &[u8]) -> bool {
+            self.0.iter()
+                .find(|(skip_key, skip_spec)| *skip_key == key && *skip_spec <= spec_version)
+                .is_some()
+        }
+    }
+
+}
+
 /// Given the same spec versions and the same number, this should output the same value,
 /// but the output block number can be pseudorandom in nature. The output number should be
 /// between the first and last spec versions provided (so blocks newer than the last runtime
@@ -342,7 +401,7 @@ fn pick_pseudorandom_block(spec_versions: Option<&[SpecVersionUpdate]>, number: 
     // 0 0 0 1 1 1 2 2 2 3 3
     // 0 4   1 5   2 6   3 7
     let spec_version_idx = number % spec_versions.len();
-    let spec_version_block_idx = number / spec_versions.len();
+    let spec_version_block_idx = (number / spec_versions.len()) * 1001; // move 1001 blocks forward each time to sample more range
 
     let block_number = spec_versions[spec_version_idx].block + spec_version_block_idx as u32;
     block_number
@@ -355,6 +414,7 @@ struct RunnerState {
     historic_types: Arc<ChainTypeRegistry>,
     metadata: Arc<RuntimeMetadata>,
     spec_version: u32,
+    skipper: SkipDecoding
 }
 
 struct DecodedStorageEntry {
@@ -364,6 +424,9 @@ struct DecodedStorageEntry {
 }
 
 struct DecodedStorageKeyVal {
+    // For debugging we make the key btyes available in the output, but don't need them normally.
+    #[allow(dead_code)]
+    key_bytes: Vec<u8>,
     key: anyhow::Result<Vec<StorageKey>>,
     value: anyhow::Result<scale_value::Value<String>>
 }

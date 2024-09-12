@@ -194,7 +194,7 @@ where
     let cursor = &mut &*bytes;
 
     let decoded = decode_or_trace(cursor, value_id, type_resolver)
-        .with_context(|| format!("Cannot decode storage value"))? // 0x{}", hex::encode(bytes)))?
+        .with_context(|| format!("Cannot decode storage value 0x{}", hex::encode(bytes)))?
         .map_context(|type_id| type_id.to_string());
 
     if !cursor.is_empty() {
