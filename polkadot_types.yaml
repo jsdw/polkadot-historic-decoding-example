@@ -141,8 +141,9 @@ global:
     T::Moment: u64
 
     # Indices
-    T::AccountIndex: u32 # Unsure about this: GenericAccountIndex has compact-like-but-custom encoding?
+    T::AccountIndex: u32
     T::AccountId: AccountId32
+    AccountIndex: u32
 
     # Balances
     <T::Lookup as StaticLookup>::Source: AccountId
@@ -342,6 +343,12 @@ global:
       total: ExtendedBalance
       voters: Vec<(AccountId, ExtendedBalance)>
     ExtendedBalance: u128
+    SubmissionIndicesOf<T>: BTreeMap<ElectionScore, u32>
+    SignedSubmissionOf<T>: 
+      who: AccountId
+      deposit: Balance
+      solution: RawSolution<T>
+      reward: Balance
 
     # Session
     T::Keys: (AccountId, AccountId, AccountId, AccountId, AccountId)
