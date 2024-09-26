@@ -1,5 +1,5 @@
 use crate::decoding::extrinsic_decoder::{decode_extrinsic, Extrinsic, ExtrinsicCallData};
-use crate::decoding::extend_with_metadata_info;
+use frame_decode::helpers::type_registry_from_metadata;
 use frame_metadata::RuntimeMetadata;
 use scale_info_legacy::{ChainTypeRegistry, TypeRegistrySet};
 use std::path::PathBuf;
@@ -105,7 +105,8 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                     // Prepare new historic type info for this new spec/metadata. Extend the type info
                     // with Call types from the metadataa so that things like utility.batch "Just Work".
                     let mut historic_types_for_spec = historic_types.for_spec_version(this_spec_version as u64).to_owned();
-                    extend_with_metadata_info(&mut historic_types_for_spec, &metadata)?;
+                    let metadata_types = type_registry_from_metadata(&metadata)?;
+                    historic_types_for_spec.prepend(metadata_types);
 
                     // Print out all of the call types for any metadata we are given, for debugging etc:
                     // extrinsic_type_info::print_call_types(&historic_types_for_spec);
@@ -158,17 +159,24 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
 
             for (ext_idx, (_ext_bytes, ext_decoded)) in extrinsics.into_iter().enumerate() {
                 match ext_decoded {
-                    Ok(Extrinsic::V4Unsigned { call_data }) => {
+                    Ok(Extrinsic::Unsigned { call_data }) => {
                         if should_print_success {
                             writeln!(stdout, "  {}.{}:", call_data.pallet_name, call_data.call_name)?;
                             print_call_data(&mut stdout, &call_data)?;
                         }
                     },
-                    Ok(Extrinsic::V4Signed { address, signature, signed_exts, call_data }) => {
+                    Ok(Extrinsic::Signed { address, signature, signed_exts, call_data }) => {
                         if should_print_success {
                             writeln!(stdout, "  {}.{}:", call_data.pallet_name, call_data.call_name)?;
                             writeln!(stdout, "    Address: {address}")?;
                             writeln!(stdout, "    Signature: {signature}")?;
+                            print_signed_exts(&mut stdout, &signed_exts)?;
+                            print_call_data(&mut stdout, &call_data)?;
+                        }
+                    },
+                    Ok(Extrinsic::General { signed_exts, call_data }) => {
+                        if should_print_success {
+                            writeln!(stdout, "  {}.{}:", call_data.pallet_name, call_data.call_name)?;
                             print_signed_exts(&mut stdout, &signed_exts)?;
                             print_call_data(&mut stdout, &call_data)?;
                         }

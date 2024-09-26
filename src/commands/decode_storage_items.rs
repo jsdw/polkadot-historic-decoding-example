@@ -1,8 +1,11 @@
 use std::{path::PathBuf, sync::atomic::{AtomicBool, Ordering}};
 use clap::Parser;
 use frame_metadata::RuntimeMetadata;
-use crate::{decoding::{storage_decoder::{write_storage_keys, StorageKey}, storage_type_info::StorageHasher}, utils::{self, runner::{RoundRobin, Runner}}};
-use crate::decoding::{ extend_with_metadata_info, storage_decoder, storage_entries_list::StorageEntry };
+use crate::decoding::storage_decoder::{write_storage_keys, StorageKey};
+use crate::utils::{self, runner::{RoundRobin, Runner}};
+use crate::decoding::storage_decoder;
+use frame_decode::helpers::type_registry_from_metadata;
+use frame_decode::storage::StorageHasher;
 use super::find_spec_changes::SpecVersionUpdate;
 use super::fetch_metadata::state_get_metadata;
 use anyhow::{anyhow, Context};
@@ -132,28 +135,22 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                     continue
                 }
             };
-            let storage_entries = match crate::decoding::storage_entries_list::get_storage_entries(&metadata) {
-                Ok(entries) => {
-                    match starting_entry {
-                        None => entries,
-                        Some(se) => {
-                            let se_pallet = se.pallet.to_ascii_lowercase();
-                            let se_entry = se.entry.to_ascii_lowercase();
-                            starting_entry = None;
+            let storage_entries: VecDeque<_> = {
+                let entries = frame_decode::helpers::list_storage_entries(&metadata);
+                match starting_entry {
+                    None => entries.map(|e| e.into_owned()).collect(),
+                    Some(se) => {
+                        let se_pallet = se.pallet.to_ascii_lowercase();
+                        let se_entry = se.entry.to_ascii_lowercase();
+                        starting_entry = None;
 
-                            entries
-                                .into_iter()
-                                .skip_while(|e| {
-                                    e.pallet.to_ascii_lowercase() != se_pallet || e.entry.to_ascii_lowercase() != se_entry
-                                })
-                                .collect()
-                        }
+                        entries
+                            .skip_while(|e| {
+                                e.pallet().to_ascii_lowercase() != se_pallet || e.entry().to_ascii_lowercase() != se_entry
+                            })
+                            .map(|e| e.into_owned())
+                            .collect()
                     }
-                },
-                Err(e) => {
-                    // The only error here is that the metadata can't be decoded, so break to give up on this block entirely.
-                    eprintln!("Couldn't get storage entries for {block_number}: {e}");
-                    break
                 }
             };
             
@@ -215,10 +212,11 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                         let metadata = &state.metadata;
                         let mut historic_types_for_spec = state.historic_types.for_spec_version(state.spec_version as u64).to_owned();
 
-                        extend_with_metadata_info(&mut historic_types_for_spec, &metadata)?;
+                        let metadata_types = type_registry_from_metadata(&metadata)?;
+                        historic_types_for_spec.prepend(metadata_types);
 
-                        let pallet = &storage_entry.pallet;
-                        let entry = &storage_entry.entry;
+                        let pallet = storage_entry.pallet();
+                        let entry = storage_entry.entry();
                         let at = state.block_hash;
                         let root_key = {
                             let mut hash = Vec::with_capacity(32);
@@ -228,7 +226,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                         };
 
                         // Iterate or fetch single value depending on entry.
-                        let is_iterable = crate::decoding::storage_type_info::is_iterable(pallet, entry, &state.metadata)?;
+                        let is_iterable = check_is_iterable(pallet, entry, &state.metadata)?;
                         let mut values = if is_iterable {
                             state.backend
                                 .storage_fetch_descendant_values(root_key, at)
@@ -407,6 +405,28 @@ mod skip {
 
 }
 
+/// Is this storage entry iterable? If so, we'll iterate it. If not, we can just retrieve the single entry.
+pub fn check_is_iterable(pallet_name: &str, storage_entry: &str, metadata: &RuntimeMetadata) -> anyhow::Result<bool> {
+    fn inner<Info: frame_decode::storage::StorageTypeInfo>(pallet_name: &str, storage_entry: &str, info: &Info) -> anyhow::Result<bool> {
+        let storage_info = info.get_storage_info(pallet_name, storage_entry)
+            .map_err(|e| e.into_owned())?;
+        let is_empty = storage_info.keys.is_empty();
+        Ok(!is_empty)
+    }
+
+    match metadata {
+        RuntimeMetadata::V8(m) => inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V9(m) => inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V10(m) => inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V11(m) => inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V12(m) => inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V13(m) => inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V14(m) => inner(pallet_name, storage_entry, m),
+        RuntimeMetadata::V15(m) => inner(pallet_name, storage_entry, m),
+        _ => anyhow::bail!("Only metadata V8 - V15 is supported")
+    }
+}
+
 /// Given the same spec versions and the same number, this should output the same value,
 /// but the output block number can be pseudorandom in nature. The output number should be
 /// between the first and last spec versions provided (so blocks newer than the last runtime
@@ -430,7 +450,7 @@ fn pick_pseudorandom_block(spec_versions: Option<&[SpecVersionUpdate]>, number: 
 struct RunnerState {
     backend: LegacyBackend<PolkadotConfig>,
     block_hash: H256,
-    storage_entries: VecDeque<StorageEntry<'static>>,
+    storage_entries: VecDeque<frame_decode::helpers::StorageEntry<'static>>,
     historic_types: Arc<ChainTypeRegistry>,
     metadata: Arc<RuntimeMetadata>,
     spec_version: u32,

@@ -1,8 +1,8 @@
-use super::storage_type_info::{StorageTypeInfo, StorageHasher};
+use frame_decode::storage::StorageHasher;
 use frame_metadata::RuntimeMetadata;
 use scale_type_resolver::TypeResolver;
 use scale_info_legacy::TypeRegistrySet;
-use anyhow::{anyhow, bail, Context};
+use anyhow::bail;
 
 pub type StorageValue = scale_value::Value<String>;
 pub type StorageKeys = Vec<StorageKey>;
@@ -11,7 +11,7 @@ pub type StorageKeys = Vec<StorageKey>;
 pub struct StorageKey {
     pub hash: Vec<u8>,
     pub value: Option<scale_value::Value<String>>,
-    pub hasher: StorageHasher,
+    pub hasher: frame_decode::storage::StorageHasher,
 }
 
 /// Decode the bytes representing some storage key. Here, we expect all of the key bytes including the hashed pallet name and storage entry.
@@ -46,63 +46,26 @@ pub fn decode_storage_value(pallet_name: &str, storage_entry: &str, bytes: &[u8]
 
 fn decode_storage_keys_inner<Info, Resolver>(pallet_name: &str, storage_entry: &str, bytes: &[u8], info: &Info, type_resolver: &Resolver) -> anyhow::Result<StorageKeys>
 where
-    Info: StorageTypeInfo,
+    Info: frame_decode::storage::StorageTypeInfo,
     Info::TypeId: Clone + core::fmt::Display + core::fmt::Debug + Send + Sync + 'static,
     Resolver: TypeResolver<TypeId = Info::TypeId>,
 {
-    let storage_info = info.get_storage_info(pallet_name, storage_entry)
-        .with_context(|| "Cannot find storage entry")?;
-
     let cursor = &mut &*bytes;
+    let key_info = frame_decode::storage::decode_storage_key(pallet_name, storage_entry, cursor, info, type_resolver)?;
 
-    let prefix = strip_bytes(cursor, 32)
-        .with_context(|| "Cannot strip the pallet and storage entry prefix from the storage key")?;
+    let decoded: anyhow::Result<_> = key_info.parts().map(|part| {
+        let hash = bytes[part.hash_range()].to_vec();
+        let hasher = part.hasher();
+        let value = part.value().map(|val_info| {
+            let value = scale_value::scale::decode_as_type(
+                &mut &bytes[val_info.range()], 
+                val_info.ty().clone(), 
+                type_resolver
+            )?.map_context(|id| id.to_string());
+            anyhow::Result::<scale_value::Value<String>>::Ok(value)
+        }).transpose()?;
 
-    // Check that the storage key prefix is what we expect:
-    let expected_prefix = {
-        let mut v = Vec::<u8>::with_capacity(16);
-        v.extend(&sp_crypto_hashing::twox_128(pallet_name.as_bytes()));
-        v.extend(&sp_crypto_hashing::twox_128(storage_entry.as_bytes()));
-        v
-    };
-    if prefix != expected_prefix {
-        bail!("Storage prefix for {pallet_name}.{storage_entry} does not match expected prefix of {}", hex::encode(expected_prefix))
-    }
-
-    let decoded: anyhow::Result<StorageKeys> = storage_info.keys.into_iter().map(|key: super::storage_type_info::StorageKey<<Info as StorageTypeInfo>::TypeId>| {
-        let hasher = key.hasher;
-        match &hasher {
-            StorageHasher::Blake2_128 |
-            StorageHasher::Twox128 => {
-                let hash = strip_bytes(cursor, 16)?;
-                Ok(StorageKey { hash, hasher, value: None })
-            },
-            StorageHasher::Blake2_256 |
-            StorageHasher::Twox256 => {
-                let hash = strip_bytes(cursor, 32)?;
-                Ok(StorageKey { hash, hasher, value: None })
-            },
-            StorageHasher::Blake2_128Concat => {
-                let hash = strip_bytes(cursor, 16)?;
-                let value = decode_or_trace(cursor, key.key_id, type_resolver)
-                    .with_context(|| "Cannot decode Blake2_128Concat storage key")?
-                    .map_context(|type_id| type_id.to_string());
-                Ok(StorageKey { hash, hasher, value: Some(value) })
-            },
-            StorageHasher::Twox64Concat => {
-                let hash = strip_bytes(cursor, 8)?;
-                let value = decode_or_trace(cursor, key.key_id, type_resolver)
-                    .with_context(|| "Cannot decode Twox64Concat storage key")?
-                    .map_context(|type_id| type_id.to_string());
-                Ok(StorageKey { hash, hasher, value: Some(value) })
-            },
-            StorageHasher::Identity => {
-                let value = decode_or_trace(cursor, key.key_id, type_resolver)
-                    .with_context(|| "Cannot decode Identity storage key")?
-                    .map_context(|type_id| type_id.to_string());
-                Ok(StorageKey { hash: Vec::new(), hasher, value: Some(value) })
-            },
-        }
+        Ok(StorageKey { hash, value, hasher })
     }).collect();
 
     if !cursor.is_empty() && decoded.is_ok() {
@@ -182,68 +145,25 @@ pub fn write_storage_keys_fmt<W: std::fmt::Write>(mut writer: W, keys: &[Storage
 
 fn decode_storage_value_inner<Info, Resolver>(pallet_name: &str, storage_entry: &str, bytes: &[u8], info: &Info, type_resolver: &Resolver) -> anyhow::Result<StorageValue>
 where
-    Info: StorageTypeInfo,
+    Info: frame_decode::storage::StorageTypeInfo,
     Info::TypeId: Clone + core::fmt::Display + core::fmt::Debug + Send + Sync + 'static,
     Resolver: TypeResolver<TypeId = Info::TypeId>,
 {
-    let storage_info = info.get_storage_info(pallet_name, storage_entry)
-        .with_context(|| "Cannot find storage entry")?;
-
-    let value_id = storage_info.value_id;
-
     let cursor = &mut &*bytes;
-
-    let decoded = decode_or_trace(cursor, value_id, type_resolver)
-        .with_context(|| format!("Cannot decode storage value 0x{}", hex::encode(bytes)))?
-        .map_context(|type_id| type_id.to_string());
+    let value = frame_decode::storage::decode_storage_value(
+        pallet_name, 
+        storage_entry,
+        cursor, 
+        info, 
+        type_resolver, 
+        scale_value::scale::ValueVisitor::new()
+    )?.map_context(|id| id.to_string());
 
     if !cursor.is_empty() {
         let mut value_string = String::new();
-        crate::utils::write_value_fmt(&mut value_string, &decoded)?;
+        crate::utils::write_value_fmt(&mut value_string, &value)?;
         bail!("{} leftover bytes decoding storage value: {cursor:?}. decoded:\n\n{value_string}", cursor.len());
     }
 
-    Ok(decoded)
-}
-
-fn strip_bytes(cursor: &mut &[u8], num: usize) -> anyhow::Result<Vec<u8>> {
-    let bytes = cursor
-        .get(..num)
-        .ok_or_else(|| anyhow!("Cannot get {num} bytes from cursor; not enough input"))?
-        .to_vec();
-
-    *cursor = &cursor[num..];
-    Ok(bytes)
-}
-
-fn decode_or_trace<Resolver, Id>(cursor: &mut &[u8], type_id: Id, types: &Resolver) -> anyhow::Result<scale_value::Value<String>> 
-where
-    Resolver: TypeResolver<TypeId = Id>,
-    Id: core::fmt::Debug + core::fmt::Display + Clone + Send + Sync + 'static
-{
-    let initial = *cursor;
-    match scale_value::scale::decode_as_type(cursor, type_id.clone(), types) {
-        Ok(value) => Ok(value.map_context(|id| id.to_string())),
-        Err(_e) => {
-            // Reset cursor incase it's been consumed by the above call.
-            *cursor = initial;
-            scale_value::scale::tracing::decode_as_type(cursor, type_id.clone(), types)
-                .map(|v| v.map_context(|id| id.to_string()))
-                .with_context(|| format!("Failed to decode type with id {type_id}"))
-        }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_strip_bytes() {
-        let v = vec![0,1,2,3,4,5,6,7,8];
-        let cursor = &mut &*v;
-        let stripped = strip_bytes(cursor, 4).unwrap();
-        assert_eq!(stripped, &[0,1,2,3]);
-        assert_eq!(cursor, &[4,5,6,7,8]);
-    }
+    Ok(value)
 }
