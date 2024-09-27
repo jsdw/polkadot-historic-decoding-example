@@ -11,9 +11,9 @@ hex = "0.4.3"
 parity-scale-codec = "3.6.12"
 rand = "0.8.5"
 scale-info = "2.11.3"
-scale-info-legacy = "0.2.0"
+scale-info-legacy = "0.2.1"
 scale-type-resolver = "0.2.0"
-scale-value = "0.16.2"
+scale-value = "0.16.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.117"
 serde_yaml = "0.9.34"
@@ -21,7 +21,3 @@ sp-crypto-hashing = "0.1.0"
 subxt = "0.37.0"
 tokio = { version = "1.38.0", features = ["full"] }
 frame-decode = { version = "0.0.7" }
-
-[patch.crates-io]
-scale-info-legacy = { path = "../scale-info-legacy" }
-scale-value = { path = "../scale-value" }

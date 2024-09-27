@@ -2236,6 +2236,8 @@ dependencies = [
 [[package]]
 name = "scale-info-legacy"
 version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4eb04ed2b1e16cd492e7964b406d4c8cc43094e0cf700ebd18999ae76998fd62"
 dependencies = [
  "derive_more",
  "hashbrown",
@@ -2272,6 +2274,8 @@ dependencies = [
 [[package]]
 name = "scale-value"
 version = "0.16.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cd6ab090d823e75cfdb258aad5fe92e13f2af7d04b43a55d607d25fcc38c811"
 dependencies = [
  "base58",
  "blake2",
