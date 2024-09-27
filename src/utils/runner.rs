@@ -1,7 +1,7 @@
-use std::future::Future;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
 use std::collections::HashMap;
+use std::future::Future;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 pub struct Runner<State, InitFn, TaskFn, OutputFn> {
     initial_state: Arc<State>,
@@ -10,7 +10,8 @@ pub struct Runner<State, InitFn, TaskFn, OutputFn> {
     output_fn: OutputFn,
 }
 
-impl <State, InitFn, TaskFn, OutputFn, WorkloadFut, Workload, OutputFut, Output> Runner <State, InitFn, TaskFn, OutputFn>
+impl<State, InitFn, TaskFn, OutputFn, WorkloadFut, Workload, OutputFut, Output>
+    Runner<State, InitFn, TaskFn, OutputFn>
 where
     State: Send + Sync + 'static,
     InitFn: Send + Sync + 'static + Fn(usize, &State) -> WorkloadFut,
@@ -50,21 +51,19 @@ where
                 'outer: loop {
                     // Don't bothr doing any more if the output chan is closed.
                     if output_tx.is_closed() {
-                        return
+                        return;
                     }
 
                     // Initialise new workload. This is passed to each task.
                     let workload = match init_fn(task_idx, &state).await {
-                        Ok(Some(workload)) => {
-                            workload
-                        },
+                        Ok(Some(workload)) => workload,
                         Ok(None) => {
                             // None indicates nothing left to do in this runner.
-                            return
+                            return;
                         }
                         Err(_e) => {
                             // eprintln!("Error instantiating workload for task {task_idx} (running {current_task_num}): {e}");
-                            continue
+                            continue;
                         }
                     };
 
@@ -75,32 +74,31 @@ where
                             Ok(Some(output)) => {
                                 task_retries = 0;
                                 output
-                            },
+                            }
                             Ok(None) => {
                                 // None indicates nothing left to do in this runner.
-                                return
-                            },
+                                return;
+                            }
                             Err(e) => {
                                 task_retries += 1;
                                 if task_retries > MAX_RETRIES {
                                     // task went wrong a few times; re-initialize everything.
                                     eprintln!("Error running task {current_task_num}: {e:?}");
-                                    continue 'outer
+                                    continue 'outer;
                                 } else {
                                     // Try task again.
-                                    continue 'inner
+                                    continue 'inner;
                                 }
                             }
                         };
 
                         // Task done; pull the next task ID to run the next task.
                         if let Err(_) = output_tx.send((current_task_num, output)).await {
-                            return
+                            return;
                         }
 
                         current_task_num = next_task_num.fetch_add(1, Ordering::Relaxed);
                     }
-
                 }
             });
         }
@@ -134,17 +132,17 @@ where
 
 /// A helper which returns the next item from some list each time
 /// it's asked for one.
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct RoundRobin<T> {
     items: Vec<T>,
     idx: Arc<AtomicUsize>,
 }
 
-impl <T> RoundRobin<T> {
+impl<T> RoundRobin<T> {
     pub fn new(items: Vec<T>) -> Self {
         RoundRobin {
             items,
-            idx: Arc::new(AtomicUsize::new(0))
+            idx: Arc::new(AtomicUsize::new(0)),
         }
     }
     pub fn get(&self) -> &T {

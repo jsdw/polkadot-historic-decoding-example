@@ -24,13 +24,13 @@ async fn main() -> anyhow::Result<()> {
     match cmd {
         Commands::DecodeBlocks(opts) => {
             commands::decode_blocks::run(opts).await?;
-        },
+        }
         Commands::DecodeStorageItems(opts) => {
             commands::decode_storage_items::run(opts).await?;
-        },
+        }
         Commands::FetchMetadata(opts) => {
             commands::fetch_metadata::run(opts).await?;
-        },
+        }
         Commands::FindSpecChanges(opts) => {
             commands::find_spec_changes::run(opts).await?;
         }

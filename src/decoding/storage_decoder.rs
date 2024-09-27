@@ -1,8 +1,8 @@
+use anyhow::bail;
 use frame_decode::storage::StorageHasher;
 use frame_metadata::RuntimeMetadata;
-use scale_type_resolver::TypeResolver;
 use scale_info_legacy::TypeRegistrySet;
-use anyhow::bail;
+use scale_type_resolver::TypeResolver;
 
 pub type StorageValue = scale_value::Value<String>;
 pub type StorageKeys = Vec<StorageKey>;
@@ -15,62 +15,132 @@ pub struct StorageKey {
 }
 
 /// Decode the bytes representing some storage key. Here, we expect all of the key bytes including the hashed pallet name and storage entry.
-pub fn decode_storage_keys(pallet_name: &str, storage_entry: &str, bytes: &[u8], metadata: &RuntimeMetadata, historic_types: &TypeRegistrySet) -> anyhow::Result<StorageKeys> {
+pub fn decode_storage_keys(
+    pallet_name: &str,
+    storage_entry: &str,
+    bytes: &[u8],
+    metadata: &RuntimeMetadata,
+    historic_types: &TypeRegistrySet,
+) -> anyhow::Result<StorageKeys> {
     match metadata {
-        RuntimeMetadata::V8(m) => decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, historic_types),
-        RuntimeMetadata::V9(m) => decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, historic_types),
-        RuntimeMetadata::V10(m) => decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, historic_types),
-        RuntimeMetadata::V11(m) => decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, historic_types),
-        RuntimeMetadata::V12(m) => decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, historic_types),
-        RuntimeMetadata::V13(m) => decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, historic_types),
-        RuntimeMetadata::V14(m) => decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, &m.types),
-        RuntimeMetadata::V15(m) => decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, &m.types),
-        _ => bail!("Only metadata V8 - V15 is supported")
+        RuntimeMetadata::V8(m) => {
+            decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, historic_types)
+        }
+        RuntimeMetadata::V9(m) => {
+            decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, historic_types)
+        }
+        RuntimeMetadata::V10(m) => {
+            decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, historic_types)
+        }
+        RuntimeMetadata::V11(m) => {
+            decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, historic_types)
+        }
+        RuntimeMetadata::V12(m) => {
+            decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, historic_types)
+        }
+        RuntimeMetadata::V13(m) => {
+            decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, historic_types)
+        }
+        RuntimeMetadata::V14(m) => {
+            decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, &m.types)
+        }
+        RuntimeMetadata::V15(m) => {
+            decode_storage_keys_inner(pallet_name, storage_entry, bytes, m, &m.types)
+        }
+        _ => bail!("Only metadata V8 - V15 is supported"),
     }
 }
 
 /// Decode the bytes representing some storage value.
-pub fn decode_storage_value(pallet_name: &str, storage_entry: &str, bytes: &[u8], metadata: &RuntimeMetadata, historic_types: &TypeRegistrySet) -> anyhow::Result<StorageValue> {
+pub fn decode_storage_value(
+    pallet_name: &str,
+    storage_entry: &str,
+    bytes: &[u8],
+    metadata: &RuntimeMetadata,
+    historic_types: &TypeRegistrySet,
+) -> anyhow::Result<StorageValue> {
     match metadata {
-        RuntimeMetadata::V8(m) => decode_storage_value_inner(pallet_name, storage_entry, bytes, m, historic_types),
-        RuntimeMetadata::V9(m) => decode_storage_value_inner(pallet_name, storage_entry, bytes, m, historic_types),
-        RuntimeMetadata::V10(m) => decode_storage_value_inner(pallet_name, storage_entry, bytes, m, historic_types),
-        RuntimeMetadata::V11(m) => decode_storage_value_inner(pallet_name, storage_entry, bytes, m, historic_types),
-        RuntimeMetadata::V12(m) => decode_storage_value_inner(pallet_name, storage_entry, bytes, m, historic_types),
-        RuntimeMetadata::V13(m) => decode_storage_value_inner(pallet_name, storage_entry, bytes, m, historic_types),
-        RuntimeMetadata::V14(m) => decode_storage_value_inner(pallet_name, storage_entry, bytes, m, &m.types),
-        RuntimeMetadata::V15(m) => decode_storage_value_inner(pallet_name, storage_entry, bytes, m, &m.types),
-        _ => bail!("Only metadata V8 - V15 is supported")
+        RuntimeMetadata::V8(m) => {
+            decode_storage_value_inner(pallet_name, storage_entry, bytes, m, historic_types)
+        }
+        RuntimeMetadata::V9(m) => {
+            decode_storage_value_inner(pallet_name, storage_entry, bytes, m, historic_types)
+        }
+        RuntimeMetadata::V10(m) => {
+            decode_storage_value_inner(pallet_name, storage_entry, bytes, m, historic_types)
+        }
+        RuntimeMetadata::V11(m) => {
+            decode_storage_value_inner(pallet_name, storage_entry, bytes, m, historic_types)
+        }
+        RuntimeMetadata::V12(m) => {
+            decode_storage_value_inner(pallet_name, storage_entry, bytes, m, historic_types)
+        }
+        RuntimeMetadata::V13(m) => {
+            decode_storage_value_inner(pallet_name, storage_entry, bytes, m, historic_types)
+        }
+        RuntimeMetadata::V14(m) => {
+            decode_storage_value_inner(pallet_name, storage_entry, bytes, m, &m.types)
+        }
+        RuntimeMetadata::V15(m) => {
+            decode_storage_value_inner(pallet_name, storage_entry, bytes, m, &m.types)
+        }
+        _ => bail!("Only metadata V8 - V15 is supported"),
     }
 }
 
-fn decode_storage_keys_inner<Info, Resolver>(pallet_name: &str, storage_entry: &str, bytes: &[u8], info: &Info, type_resolver: &Resolver) -> anyhow::Result<StorageKeys>
+fn decode_storage_keys_inner<Info, Resolver>(
+    pallet_name: &str,
+    storage_entry: &str,
+    bytes: &[u8],
+    info: &Info,
+    type_resolver: &Resolver,
+) -> anyhow::Result<StorageKeys>
 where
     Info: frame_decode::storage::StorageTypeInfo,
     Info::TypeId: Clone + core::fmt::Display + core::fmt::Debug + Send + Sync + 'static,
     Resolver: TypeResolver<TypeId = Info::TypeId>,
 {
     let cursor = &mut &*bytes;
-    let key_info = frame_decode::storage::decode_storage_key(pallet_name, storage_entry, cursor, info, type_resolver)?;
+    let key_info = frame_decode::storage::decode_storage_key(
+        pallet_name,
+        storage_entry,
+        cursor,
+        info,
+        type_resolver,
+    )?;
 
-    let decoded: anyhow::Result<_> = key_info.parts().map(|part| {
-        let hash = bytes[part.hash_range()].to_vec();
-        let hasher = part.hasher();
-        let value = part.value().map(|val_info| {
-            let value = scale_value::scale::decode_as_type(
-                &mut &bytes[val_info.range()], 
-                val_info.ty().clone(), 
-                type_resolver
-            )?.map_context(|id| id.to_string());
-            anyhow::Result::<scale_value::Value<String>>::Ok(value)
-        }).transpose()?;
+    let decoded: anyhow::Result<_> = key_info
+        .parts()
+        .map(|part| {
+            let hash = bytes[part.hash_range()].to_vec();
+            let hasher = part.hasher();
+            let value = part
+                .value()
+                .map(|val_info| {
+                    let value = scale_value::scale::decode_as_type(
+                        &mut &bytes[val_info.range()],
+                        val_info.ty().clone(),
+                        type_resolver,
+                    )?
+                    .map_context(|id| id.to_string());
+                    anyhow::Result::<scale_value::Value<String>>::Ok(value)
+                })
+                .transpose()?;
 
-        Ok(StorageKey { hash, value, hasher })
-    }).collect();
+            Ok(StorageKey {
+                hash,
+                value,
+                hasher,
+            })
+        })
+        .collect();
 
     if !cursor.is_empty() && decoded.is_ok() {
         let decoded = print_storage_key_res(&decoded)?;
-        bail!("{} leftover bytes decoding storage keys: {cursor:?}. decoded: {decoded}", cursor.len());
+        bail!(
+            "{} leftover bytes decoding storage keys: {cursor:?}. decoded: {decoded}",
+            cursor.len()
+        );
     }
 
     decoded
@@ -92,11 +162,14 @@ pub fn write_storage_keys<W: std::io::Write>(writer: W, keys: &[StorageKey]) -> 
     write_storage_keys_fmt(writer, keys)
 }
 
-pub fn write_storage_keys_fmt<W: std::fmt::Write>(mut writer: W, keys: &[StorageKey]) -> anyhow::Result<()> {
+pub fn write_storage_keys_fmt<W: std::fmt::Write>(
+    mut writer: W,
+    keys: &[StorageKey],
+) -> anyhow::Result<()> {
     // Plain entries have no keys:
     if keys.is_empty() {
         write!(&mut writer, "plain")?;
-        return Ok(())
+        return Ok(());
     }
 
     // blake2: AccountId(0x2331) + ident: Foo(123) + blake2:0x23edbfe
@@ -109,31 +182,31 @@ pub fn write_storage_keys_fmt<W: std::fmt::Write>(mut writer: W, keys: &[Storage
             (StorageHasher::Blake2_128, None) => {
                 write!(&mut writer, "blake2_128: ")?;
                 write!(&mut writer, "{}", hex::encode(&key.hash))?;
-            },
+            }
             (StorageHasher::Blake2_256, None) => {
                 write!(&mut writer, "blake2_256: ")?;
                 write!(&mut writer, "{}", hex::encode(&key.hash))?;
-            },
+            }
             (StorageHasher::Blake2_128Concat, Some(value)) => {
                 write!(&mut writer, "blake2_128_concat: ")?;
                 crate::utils::write_compact_value_fmt(&mut writer, &value)?;
-            },
+            }
             (StorageHasher::Twox128, None) => {
                 write!(&mut writer, "twox_128: ")?;
                 write!(&mut writer, "{}", hex::encode(&key.hash))?;
-            },
+            }
             (StorageHasher::Twox256, None) => {
                 write!(&mut writer, "twox_256: ")?;
                 write!(&mut writer, "{}", hex::encode(&key.hash))?;
-            },
+            }
             (StorageHasher::Twox64Concat, Some(value)) => {
                 write!(&mut writer, "twox64_concat: ")?;
                 crate::utils::write_compact_value_fmt(&mut writer, &value)?;
-            },
+            }
             (StorageHasher::Identity, Some(value)) => {
                 write!(&mut writer, "ident: ")?;
                 crate::utils::write_compact_value_fmt(&mut writer, &value)?;
-            },
+            }
             _ => {
                 bail!("Invalid storage hasher/value pair")
             }
@@ -143,7 +216,13 @@ pub fn write_storage_keys_fmt<W: std::fmt::Write>(mut writer: W, keys: &[Storage
     Ok(())
 }
 
-fn decode_storage_value_inner<Info, Resolver>(pallet_name: &str, storage_entry: &str, bytes: &[u8], info: &Info, type_resolver: &Resolver) -> anyhow::Result<StorageValue>
+fn decode_storage_value_inner<Info, Resolver>(
+    pallet_name: &str,
+    storage_entry: &str,
+    bytes: &[u8],
+    info: &Info,
+    type_resolver: &Resolver,
+) -> anyhow::Result<StorageValue>
 where
     Info: frame_decode::storage::StorageTypeInfo,
     Info::TypeId: Clone + core::fmt::Display + core::fmt::Debug + Send + Sync + 'static,
@@ -151,18 +230,22 @@ where
 {
     let cursor = &mut &*bytes;
     let value = frame_decode::storage::decode_storage_value(
-        pallet_name, 
+        pallet_name,
         storage_entry,
-        cursor, 
-        info, 
-        type_resolver, 
-        scale_value::scale::ValueVisitor::new()
-    )?.map_context(|id| id.to_string());
+        cursor,
+        info,
+        type_resolver,
+        scale_value::scale::ValueVisitor::new(),
+    )?
+    .map_context(|id| id.to_string());
 
     if !cursor.is_empty() {
         let mut value_string = String::new();
         crate::utils::write_value_fmt(&mut value_string, &value)?;
-        bail!("{} leftover bytes decoding storage value: {cursor:?}. decoded:\n\n{value_string}", cursor.len());
+        bail!(
+            "{} leftover bytes decoding storage value: {cursor:?}. decoded:\n\n{value_string}",
+            cursor.len()
+        );
     }
 
     Ok(value)

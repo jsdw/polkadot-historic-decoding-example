@@ -1,18 +1,22 @@
 pub mod binary_chopper;
 pub mod runner;
 
+use frame_metadata::RuntimeMetadata;
 use scale_value::{Composite, Value, ValueDef};
 
 /// Our stdout lock is io::Write but we need fmt::Write for scale_value writing.
-/// Ideally we'd change scale_value, but io::Write is std-only among other things, 
+/// Ideally we'd change scale_value, but io::Write is std-only among other things,
 /// so scale-value uses fmt::Write to be no-std.
 pub struct ToFmtWrite<W>(pub W);
-impl <W: std::io::Write> std::fmt::Write for ToFmtWrite<W> {
+impl<W: std::io::Write> std::fmt::Write for ToFmtWrite<W> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        self.0.write(s.as_bytes()).map(|_| ()).map_err(|_| std::fmt::Error)
+        self.0
+            .write(s.as_bytes())
+            .map(|_| ())
+            .map_err(|_| std::fmt::Error)
     }
 }
-impl <W: std::io::Write> std::io::Write for ToFmtWrite<W> {
+impl<W: std::io::Write> std::io::Write for ToFmtWrite<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.0.write(buf)
     }
@@ -21,23 +25,57 @@ impl <W: std::io::Write> std::io::Write for ToFmtWrite<W> {
     }
 }
 
+pub fn type_registry_from_metadata_any(
+    metadata: &RuntimeMetadata,
+) -> anyhow::Result<scale_info_legacy::TypeRegistry> {
+    let types = match metadata {
+        RuntimeMetadata::V0(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
+        RuntimeMetadata::V1(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
+        RuntimeMetadata::V2(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
+        RuntimeMetadata::V3(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
+        RuntimeMetadata::V4(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
+        RuntimeMetadata::V5(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
+        RuntimeMetadata::V6(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
+        RuntimeMetadata::V7(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
+        RuntimeMetadata::V8(md) => frame_decode::helpers::type_registry_from_metadata(md),
+        RuntimeMetadata::V9(md) => frame_decode::helpers::type_registry_from_metadata(md),
+        RuntimeMetadata::V10(md) => frame_decode::helpers::type_registry_from_metadata(md),
+        RuntimeMetadata::V11(md) => frame_decode::helpers::type_registry_from_metadata(md),
+        RuntimeMetadata::V12(md) => frame_decode::helpers::type_registry_from_metadata(md),
+        RuntimeMetadata::V13(md) => frame_decode::helpers::type_registry_from_metadata(md),
+        RuntimeMetadata::V14(_md) => Ok(scale_info_legacy::TypeRegistry::empty()),
+        RuntimeMetadata::V15(_md) => Ok(scale_info_legacy::TypeRegistry::empty()),
+    }?;
+    Ok(types)
+}
+
 /// Write out a pretty Value using `std::io::Write`.
-pub fn write_value<W: std::io::Write, T: std::fmt::Display>(w: W, value: &Value<T>) -> core::fmt::Result {
+pub fn write_value<W: std::io::Write, T: std::fmt::Display>(
+    w: W,
+    value: &Value<T>,
+) -> core::fmt::Result {
     write_value_fmt(ToFmtWrite(w), value)
 }
 
 /// Write out a pretty Value using `std::fmt::Write`.
-pub fn write_value_fmt<W: std::fmt::Write, T: std::fmt::Display>(w: W, value: &Value<T>) -> core::fmt::Result {
+pub fn write_value_fmt<W: std::fmt::Write, T: std::fmt::Display>(
+    w: W,
+    value: &Value<T>,
+) -> core::fmt::Result {
     scale_value::stringify::to_writer_custom()
         .pretty()
         .format_context(|type_id, w: &mut W| write!(w, "{type_id}"))
-        .add_custom_formatter(|v, w: &mut W| scale_value::stringify::custom_formatters::format_hex(v,w))
+        .add_custom_formatter(|v, w: &mut W| {
+            scale_value::stringify::custom_formatters::format_hex(v, w)
+        })
         .add_custom_formatter(|v, w: &mut W| {
             // don't space unnamed composites over multiple lines if lots of primitive values.
             if let ValueDef::Composite(Composite::Unnamed(vals)) = &v.value {
-                let are_primitive = vals.iter().all(|val| matches!(val.value, ValueDef::Primitive(_)));
+                let are_primitive = vals
+                    .iter()
+                    .all(|val| matches!(val.value, ValueDef::Primitive(_)));
                 if are_primitive {
-                    return Some(write!(w, "{v}"))
+                    return Some(write!(w, "{v}"));
                 }
             }
             None
@@ -49,17 +87,24 @@ pub fn write_value_fmt<W: std::fmt::Write, T: std::fmt::Display>(w: W, value: &V
 //     write_compact_value_fmt(ToFmtWrite(writer), value)
 // }
 
-pub fn write_compact_value_fmt<W: std::fmt::Write>(writer: W, value: &Value<String>) -> anyhow::Result<()> {
+pub fn write_compact_value_fmt<W: std::fmt::Write>(
+    writer: W,
+    value: &Value<String>,
+) -> anyhow::Result<()> {
     scale_value::stringify::to_writer_custom()
         .compact()
         .format_context(|type_id, w: &mut W| write!(w, "{type_id}"))
-        .add_custom_formatter(|v, w: &mut W| scale_value::stringify::custom_formatters::format_hex(v,w))
+        .add_custom_formatter(|v, w: &mut W| {
+            scale_value::stringify::custom_formatters::format_hex(v, w)
+        })
         .add_custom_formatter(|v, w: &mut W| {
             // don't space unnamed composites over multiple lines if lots of primitive values.
             if let ValueDef::Composite(Composite::Unnamed(vals)) = &v.value {
-                let are_primitive = vals.iter().all(|val| matches!(val.value, ValueDef::Primitive(_)));
+                let are_primitive = vals
+                    .iter()
+                    .all(|val| matches!(val.value, ValueDef::Primitive(_)));
                 if are_primitive {
-                    return Some(write!(w, "{v}"))
+                    return Some(write!(w, "{v}"));
                 }
             }
             None
@@ -78,13 +123,8 @@ pub fn url_or_polkadot_rpc_nodes(url: Option<&str>) -> Vec<String> {
                 .map(|url| url.to_owned())
                 .collect::<Vec<String>>()
         })
-        .unwrap_or_else(|| {
-            RPC_NODE_URLS
-                .iter()
-                .map(|url| url.to_string())
-                .collect()
-        });
-    
+        .unwrap_or_else(|| RPC_NODE_URLS.iter().map(|url| url.to_string()).collect());
+
     urls
 }
 
@@ -103,7 +143,7 @@ const RPC_NODE_URLS: [&str; 7] = [
 /// Wrap a writer to indent any newlines by some amount.
 pub struct IndentedWriter<const U: usize, W>(pub W);
 
-impl <const U: usize, W: std::io::Write> std::io::Write for IndentedWriter<U, W> {
+impl<const U: usize, W: std::io::Write> std::io::Write for IndentedWriter<U, W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         // This is dumb and doesn't handle failure to write out buffer.
         for &byte in buf {

@@ -6,22 +6,17 @@ pub struct BinaryChopper<N, T> {
     max: (N, T),
 }
 
-#[derive(Clone,PartialEq,Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Next<N, T> {
     NeedsState(N),
-    Finished {
-        min: (N, T),
-        max: (N, T),
-    }
+    Finished { min: (N, T), max: (N, T) },
 }
 
-impl <N, T> Next<N, T> {
+impl<N, T> Next<N, T> {
     /// Unwrap [`Next`] and return the values from [`Next::Finished`].
     pub fn unwrap_finished(self) -> ((N, T), (N, T)) {
         match self {
-            Next::Finished { min, max } => {
-                (min, max)
-            },
+            Next::Finished { min, max } => (min, max),
             _ => {
                 panic!("Expected Next::Finished")
             }
@@ -29,7 +24,7 @@ impl <N, T> Next<N, T> {
     }
 }
 
-impl <N: BinaryChopNumber, T: std::cmp::PartialEq + Clone> BinaryChopper<N, T> {
+impl<N: BinaryChopNumber, T: std::cmp::PartialEq + Clone> BinaryChopper<N, T> {
     /// Give an initial start and end value and state.
     pub fn new(min: (N, T), max: (N, T)) -> Self {
         Self { min, max }
@@ -43,7 +38,10 @@ impl <N: BinaryChopNumber, T: std::cmp::PartialEq + Clone> BinaryChopper<N, T> {
         // If we start with the same numbers, this will end. If the two numbers are
         // adjacent to eachother then we also end; no further chopping to do!
         if self.min.0 == self.max.0 || self.min.0.increment() == self.max.0 {
-            Next::Finished { min: self.min.clone(), max: self.max.clone() }
+            Next::Finished {
+                min: self.min.clone(),
+                max: self.max.clone(),
+            }
         } else {
             Next::NeedsState(self.mid())
         }
@@ -82,7 +80,7 @@ macro_rules! impl_binary_chop_number {
                 (self + other) / 2
             }
         }
-    }
+    };
 }
 
 impl_binary_chop_number!(usize);
@@ -95,17 +93,14 @@ mod test {
 
     #[test]
     fn test_going_higher() {
-        let versions = vec![0,0,0,1,1,1,1,2,3,4,4,5];
+        let versions = vec![0, 0, 0, 1, 1, 1, 1, 2, 3, 4, 4, 5];
         let mut start = 0usize;
         let end = versions.len() - 1;
         let mut changes = vec![];
 
         while start != end {
-            let mut chopper = BinaryChopper::new(
-                (start, versions[start]), 
-                (end, versions[end]),
-            );
-    
+            let mut chopper = BinaryChopper::new((start, versions[start]), (end, versions[end]));
+
             while let Next::NeedsState(n) = chopper.next_value() {
                 chopper.set_state_for_next_value(versions[n as usize]);
             }

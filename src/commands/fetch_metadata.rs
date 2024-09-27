@@ -1,17 +1,24 @@
-use clap::Parser;
-use subxt::backend::{
-    legacy::{ rpc_methods::{Bytes, NumberOrHex}, LegacyRpcMethods }, rpc::{rpc_params, RpcClient}
-};
-use subxt::{Config, PolkadotConfig};
-use subxt::ext::codec::Decode;
-use anyhow::{anyhow, Context};
-use crate::utils::runner::RoundRobin;
+use std::io::Write;
+
 use crate::utils;
+use crate::utils::runner::RoundRobin;
+use anyhow::{anyhow, Context};
+use clap::Parser;
+use parity_scale_codec::Encode;
+use subxt::backend::{
+    legacy::{
+        rpc_methods::{Bytes, NumberOrHex},
+        LegacyRpcMethods,
+    },
+    rpc::{rpc_params, RpcClient},
+};
+use subxt::ext::codec::Decode;
+use subxt::{Config, PolkadotConfig};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 pub struct Opts {
-    /// URL of the node to connect to. 
+    /// URL of the node to connect to.
     /// Defaults to using Polkadot RPC URLs if not given.
     #[arg(short, long)]
     url: Option<String>,
@@ -19,10 +26,15 @@ pub struct Opts {
     /// Block number to fetch metadata from.
     #[arg(short, long)]
     block: u64,
+
+    /// As binary?
+    #[arg(long)]
+    binary: bool,
 }
 
 pub async fn run(opts: Opts) -> anyhow::Result<()> {
     let start_block_num = opts.block;
+    let as_binary = opts.binary;
 
     // Use our the given URl, or polkadot RPC node urls if not given.
     let urls = RoundRobin::new(utils::url_or_polkadot_rpc_nodes(opts.url.as_deref()));
@@ -31,7 +43,8 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
     let url = urls.get();
     let rpc_client = RpcClient::from_insecure_url(url).await?;
     let rpcs = LegacyRpcMethods::<PolkadotConfig>::new(rpc_client.clone());
-    let block_hash = rpcs.chain_get_block_hash(Some(NumberOrHex::Number(block_number as u64)))
+    let block_hash = rpcs
+        .chain_get_block_hash(Some(NumberOrHex::Number(block_number as u64)))
         .await
         .with_context(|| "Could not fetch block hash")?
         .ok_or_else(|| anyhow!("Couldn't find block {block_number}"))?;
@@ -39,11 +52,19 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
         .await
         .with_context(|| "Could not fetch metadata")?;
 
-    serde_json::to_writer_pretty(std::io::stdout(), &metadata)?;
+    if as_binary {
+        let encoded = metadata.encode();
+        std::io::stdout().write_all(&encoded)?;
+    } else {
+        serde_json::to_writer_pretty(std::io::stdout(), &metadata)?;
+    }
     Ok(())
 }
 
-pub(super) async fn state_get_metadata(client: &RpcClient, at: Option<<PolkadotConfig as Config>::Hash>) -> anyhow::Result<frame_metadata::RuntimeMetadata> {
+pub(super) async fn state_get_metadata(
+    client: &RpcClient,
+    at: Option<<PolkadotConfig as Config>::Hash>,
+) -> anyhow::Result<frame_metadata::RuntimeMetadata> {
     let bytes: Bytes = client
         .request("state_getMetadata", rpc_params![at])
         .await
