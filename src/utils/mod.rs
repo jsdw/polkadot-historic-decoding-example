@@ -1,7 +1,6 @@
 pub mod binary_chopper;
 pub mod runner;
 
-use frame_metadata::RuntimeMetadata;
 use scale_value::{Composite, Value, ValueDef};
 
 /// Our stdout lock is io::Write but we need fmt::Write for scale_value writing.
@@ -23,30 +22,6 @@ impl<W: std::io::Write> std::io::Write for ToFmtWrite<W> {
     fn flush(&mut self) -> std::io::Result<()> {
         self.0.flush()
     }
-}
-
-pub fn type_registry_from_metadata_any(
-    metadata: &RuntimeMetadata,
-) -> anyhow::Result<scale_info_legacy::TypeRegistry> {
-    let types = match metadata {
-        RuntimeMetadata::V0(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
-        RuntimeMetadata::V1(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
-        RuntimeMetadata::V2(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
-        RuntimeMetadata::V3(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
-        RuntimeMetadata::V4(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
-        RuntimeMetadata::V5(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
-        RuntimeMetadata::V6(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
-        RuntimeMetadata::V7(_d) => Ok(scale_info_legacy::TypeRegistry::empty()),
-        RuntimeMetadata::V8(md) => frame_decode::helpers::type_registry_from_metadata(md),
-        RuntimeMetadata::V9(md) => frame_decode::helpers::type_registry_from_metadata(md),
-        RuntimeMetadata::V10(md) => frame_decode::helpers::type_registry_from_metadata(md),
-        RuntimeMetadata::V11(md) => frame_decode::helpers::type_registry_from_metadata(md),
-        RuntimeMetadata::V12(md) => frame_decode::helpers::type_registry_from_metadata(md),
-        RuntimeMetadata::V13(md) => frame_decode::helpers::type_registry_from_metadata(md),
-        RuntimeMetadata::V14(_md) => Ok(scale_info_legacy::TypeRegistry::empty()),
-        RuntimeMetadata::V15(_md) => Ok(scale_info_legacy::TypeRegistry::empty()),
-    }?;
-    Ok(types)
 }
 
 /// Write out a pretty Value using `std::io::Write`.

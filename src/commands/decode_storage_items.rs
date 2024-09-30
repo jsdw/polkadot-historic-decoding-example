@@ -167,7 +167,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                 }
             };
             let storage_entries: VecDeque<_> = {
-                let entries = frame_decode::helpers::list_storage_entries(&metadata);
+                let entries = frame_decode::helpers::list_storage_entries_any(&metadata);
                 match starting_entry {
                     None => entries.map(|e| e.into_owned()).collect(),
                     Some(se) => {
@@ -264,7 +264,7 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                                 .to_owned();
 
                             let metadata_types =
-                                crate::utils::type_registry_from_metadata_any(&metadata)?;
+                                frame_decode::helpers::type_registry_from_metadata_any(&metadata)?;
                             historic_types_for_spec.prepend(metadata_types);
 
                             let pallet = storage_entry.pallet();

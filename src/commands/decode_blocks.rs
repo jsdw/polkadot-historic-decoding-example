@@ -127,7 +127,8 @@ pub async fn run(opts: Opts) -> anyhow::Result<()> {
                     let mut historic_types_for_spec = historic_types
                         .for_spec_version(this_spec_version as u64)
                         .to_owned();
-                    let metadata_types = crate::utils::type_registry_from_metadata_any(&metadata)?;
+                    let metadata_types =
+                        frame_decode::helpers::type_registry_from_metadata_any(&metadata)?;
                     historic_types_for_spec.prepend(metadata_types);
 
                     // Print out all of the call types for any metadata we are given, for debugging etc:
